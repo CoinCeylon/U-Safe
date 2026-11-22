@@ -1,0 +1,14 @@
+{
+  "name": "usafe",
+  "private": true,
+  "version": "0.0.0",
+  "description": "U-Safe anonymous ragging complaint system",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
