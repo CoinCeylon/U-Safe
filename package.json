@@ -1,0 +1,31 @@
+{
+  "name": "usafe",
+  "private": true,
+  "version": "0.0.0",
+  "description": "U-Safe anonymous ragging complaint system",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.10.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^3.2.7"
+  },
+  "type": "module"
+}
