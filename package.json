@@ -10,5 +10,11 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }
