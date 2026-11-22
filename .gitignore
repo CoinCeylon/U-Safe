@@ -69,6 +69,7 @@ Thumbs.db
 !.vscode/tasks.json
 *.swp
 *.swo
+refs
 
 # Temporary files
 tmp/
