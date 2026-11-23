@@ -53,3 +53,10 @@ export {
   sealPayload,
   openPayload,
 } from './payload';
+export {
+  type StripImageResult,
+  hasExifSegment,
+  hasGpsExif,
+  stripExifFromJpegBytes,
+  stripImage,
+} from './strip';
