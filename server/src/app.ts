@@ -11,6 +11,12 @@ import { TicketService } from './services/tickets.js';
 import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
 import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
 import {
+  createChallenge,
+  devLogin,
+  loginWithSignature,
+  requireStaff,
+} from './services/staffAuth.js';
+import {
   MAX_BLOB_SIZE,
   baseContentType,
   blobExists,
@@ -56,6 +62,7 @@ export const buildApp = async (
 
   const otp = new OtpService(db, mailer, config.EMAIL_HASH_SALT);
   const tickets = new TicketService(db, config.EMAIL_HASH_SALT);
+  (app as { decorate: (k: string, v: unknown) => void }).decorate('db', db);
   const enrollment = new EnrollmentService(db, tickets, ledger);
 
   await app.register(cors, {
@@ -270,6 +277,60 @@ export const buildApp = async (
     reply.header('content-type', 'application/octet-stream');
     reply.header('content-length', blobFileSize(resolvedBlobDir, hash));
     return reply.send(createBlobReadStream(resolvedBlobDir, hash));
+  });
+
+  app.get('/api/auth/challenge', () => {
+    const nonce = createChallenge();
+    return { nonce, challenge: nonce };
+  });
+
+  const authLoginSchema = z.object({
+    address: z.string().min(1),
+    signature: z.string().min(1).optional(),
+    key: z.string().min(1).optional(),
+    nonce: z.string().optional(),
+    challenge: z.string().optional(),
+  });
+
+  app.post('/api/auth/login', async (request, reply) => {
+    const parsed = authLoginSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid request' };
+    }
+    const token = loginWithSignature(db, {
+      address: parsed.data.address,
+      signature: parsed.data.signature,
+      key: parsed.data.key,
+    });
+    if (token === null) {
+      reply.code(401);
+      return { error: 'invalid credentials' };
+    }
+    return { token, sessionToken: token };
+  });
+
+  if (process.env.DEV_LOGIN === 'true') {
+    app.post('/api/auth/dev-login', (request) => {
+      const body = (request.body ?? {}) as { role?: string; universityId?: string | null };
+      const token = devLogin(db, {
+        role: typeof body.role === 'string' ? body.role : undefined,
+        universityId: body.universityId ?? null,
+      });
+      return { token, sessionToken: token };
+    });
+  }
+
+  // Example protected route used by tests and portals.
+  app.get('/api/staff/me', { preHandler: requireStaff() }, async (request) => {
+    const header = request.headers.authorization;
+    const auth = typeof header === 'string' ? header : '';
+    const match = /^Bearer\s+(.+)$/i.exec(auth);
+    const token = match?.[1] ?? '';
+    // verifySession imported lazily to avoid cycle
+    const { verifySession } = await import('./services/staffAuth.js');
+    const staff = verifySession(db, token);
+    return { staff };
   });
 
   return app;
