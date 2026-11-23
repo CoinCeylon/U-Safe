@@ -134,6 +134,8 @@ fileInput.onchange = () => {
 };
 
 // ---------- Step 2: Strip ----------
+const strippedDownloadBox = document.createElement('div');
+strippedDownloadBox.className = 'mt-3';
 const stripBtn = btn('Strip metadata', async () => {
   const file = fileInput.files?.[0];
   if (!file) {
@@ -151,10 +153,23 @@ const stripBtn = btn('Strip metadata', async () => {
   fileHashBox.querySelector('div:last-child')!.textContent = Array.from(hash)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+
+  // Offer the stripped file for download so the human can verify metadata
+  // removal with an EXIF reader.
+  strippedDownloadBox.innerHTML = '';
+  if (res.stripped) {
+    const url = URL.createObjectURL(res.file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.file.name;
+    a.textContent = `Download stripped file (${res.file.name})`;
+    a.className = 'text-sm text-blue-600 hover:underline';
+    strippedDownloadBox.append(a);
+  }
 });
 const stripStatus = status('Not yet stripped');
 const stripStep = step('2. Strip metadata', stripBtn);
-stripStep.append(document.createTextNode(' '), stripStatus);
+stripStep.append(document.createTextNode(' '), stripStatus, strippedDownloadBox);
 
 // ---------- Step 3: Encrypt ----------
 const encryptBtn = btn('Encrypt file', async () => {
