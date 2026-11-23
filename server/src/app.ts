@@ -1,13 +1,21 @@
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import type Database from 'better-sqlite3';
+import { z } from 'zod';
 import type { Config } from './config.js';
 import { getUniversity, listUniversities } from './services/universities.js';
 import { importRoster } from './services/roster.js';
+import { createMailer, type Mailer } from './services/mailer.js';
+import { OtpService } from './services/otp.js';
+import { TicketService } from './services/tickets.js';
+
+const otpRequestSchema = z.object({ email: z.string().email() });
+const otpVerifySchema = z.object({ email: z.string().email(), code: z.string().min(1) });
 
 export const buildApp = async (
   config: Config,
   db: Database.Database,
+  mailer: Mailer = createMailer(config),
 ): Promise<FastifyInstance> => {
   const app = Fastify({
     logger: {
@@ -15,6 +23,9 @@ export const buildApp = async (
     },
     logController: new LogController({ disableRequestLogging: true }),
   });
+
+  const otp = new OtpService(db, mailer, config.EMAIL_HASH_SALT);
+  const tickets = new TicketService(db, config.EMAIL_HASH_SALT);
 
   await app.register(cors, {
     origin: config.WEB_ORIGIN,
@@ -90,6 +101,43 @@ export const buildApp = async (
       reply.code(400);
       return { error: (error as Error).message };
     }
+  });
+
+  app.post('/api/otp/request', async (request, reply) => {
+    const parsed = otpRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid request' };
+    }
+
+    const outcome = await otp.request(parsed.data.email, request.ip);
+    if (outcome === 'rate_limited') {
+      reply.code(429);
+      return { error: 'too many requests' };
+    }
+    return { ok: true };
+  });
+
+  app.post('/api/otp/verify', (request, reply) => {
+    const parsed = otpVerifySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return { ok: false };
+    }
+
+    const outcome = otp.verify(parsed.data.email, parsed.data.code, request.ip);
+    if (outcome === 'rate_limited') {
+      reply.code(429);
+      return { error: 'too many requests' };
+    }
+    if (outcome !== 'ok') {
+      return { ok: false };
+    }
+
+    const issued = tickets.issue(parsed.data.email);
+    if (issued === null) {
+      return { ok: false };
+    }
+    return issued;
   });
 
   return app;

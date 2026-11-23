@@ -32,6 +32,10 @@ export const MERKLE_TREE_DEPTH = readPositiveInt('MERKLE_TREE_DEPTH', 20);
 export const OTP_LENGTH = readPositiveInt('OTP_LENGTH', 6);
 export const OTP_EXPIRY_MINUTES = readPositiveInt('OTP_EXPIRY_MINUTES', 10);
 export const OTP_MAX_ATTEMPTS = readPositiveInt('OTP_MAX_ATTEMPTS', 5);
+export const ENROLLMENT_TICKET_EXPIRY_MINUTES = readPositiveInt(
+  'ENROLLMENT_TICKET_EXPIRY_MINUTES',
+  15,
+);
 
 export const FILING_LIMIT_PER_MONTH = readPositiveInt('FILING_LIMIT_PER_MONTH', 2);
 
