@@ -18,7 +18,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm run test",
-    "seed": "npm run seed -w server"
+    "seed": "npm run seed -w server",
+    "mail:test": "npm run mail:test -w server"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; tsx watch src/index.ts'",
     "typecheck": "tsc -p tsconfig.json",
-    "seed": "tsx src/seed.ts",
-    "mail:test": "tsx src/test-mail.ts"
+    "seed": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; tsx src/seed.ts'",
+    "mail:test": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; tsx src/test-mail.ts'"
   },
   "dependencies": {
     "@fastify/cors": "^11.4.3",
