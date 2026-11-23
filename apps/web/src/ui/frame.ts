@@ -156,7 +156,7 @@ export function frame(input?: FrameInput): HTMLElement {
 }
 
 export const renderFrame = frame;
-export { PortalFrame as Frame };
+export type { PortalFrame as Frame };
 export const createPortalFrame = createFrame;
 
 export default frame;
