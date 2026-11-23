@@ -11,6 +11,7 @@ export default defineConfig({
         student: html('./student/index.html'),
         university: html('./university/index.html'),
         ugc: html('./ugc/index.html'),
+        ui: html('./src/ui/dev.html'),
       },
     },
   },
