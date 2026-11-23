@@ -15,3 +15,9 @@ export {
   filingNullifier,
   inboxKey,
 } from './nullifier';
+export {
+  DOMAIN_TAG_MERKLE_INNER,
+  MERKLE_TREE_DEPTH,
+  computeZeroNodes,
+  MerkleTree,
+} from './merkle';
