@@ -20,7 +20,7 @@ export default defineConfig({
         university: html('./university/index.html'),
         ugc: html('./ugc/index.html'),
         ui: html('./src/ui/dev.html'),
-        crypto: html('./src/dev/crypto.html'),
+        crypto: html('./crypto.html'),
       },
     },
   },

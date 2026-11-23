@@ -9,8 +9,8 @@ import {
   openPayload,
   sealPayload,
   stripImage,
-  unwrapKey,
-  wrapKey,
+  unwrapAesKeyBytes,
+  wrapAesKeyBytes,
 } from '@usafe/crypto';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -18,20 +18,52 @@ if (!root) {
   throw new Error('Missing #app root');
 }
 
-const fileInput = document.createElement('input');
+// Top-level error banner so JS failures are visible instead of a blank page.
+const errorBanner = document.createElement('div');
+errorBanner.className =
+  'fixed top-0 left-0 right-0 bg-red-500 text-white p-3 z-50 hidden';
+const errorMsg = document.createElement('div');
+errorMsg.className = 'text-sm font-mono break-all';
+errorBanner.append(errorMsg);
+root.append(errorBanner);
+
+function showError(msg: string): void {
+  errorMsg.textContent = msg;
+  errorBanner.classList.remove('hidden');
+  console.error(msg);
+}
+
+try {
+  // Page container: centred column with breathing room around every step.
+  const container = document.createElement('div');
+  container.className = 'max-w-4xl mx-auto p-4 md:p-6 space-y-4';
+
+  const pageTitle = document.createElement('h1');
+  pageTitle.className = 'text-2xl font-bold text-slate-900';
+  pageTitle.textContent = 'U-Safe Crypto Playground';
+
+  const pageSubtitle = document.createElement('p');
+  pageSubtitle.className = 'text-sm text-slate-500 mt-1 mb-2';
+  pageSubtitle.textContent =
+    'Local-only test harness for the client crypto library. Nothing leaves this browser.';
+
+  container.append(pageTitle, pageSubtitle);
+
+  const fileInput = document.createElement('input');
 fileInput.type = 'file';
 fileInput.accept = '*/*';
 fileInput.className =
   'block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100';
 
 const fileInfo = document.createElement('div');
-fileInfo.className = 'text-sm text-slate-500 mb-4';
+fileInfo.className = 'text-sm text-slate-500 mt-2';
 
 function step(title: string, content: HTMLElement): HTMLElement {
   const el = document.createElement('div');
-  el.className = 'card p-4 mb-3 border-l-4 border-blue-500 bg-white shadow-sm';
+  el.className =
+    'p-4 md:p-5 border border-slate-200 border-l-4 border-l-blue-500 bg-white shadow-sm rounded-lg';
   const h = document.createElement('h3');
-  h.className = 'text-lg font-semibold text-slate-800 mb-2';
+  h.className = 'text-lg font-semibold text-slate-800 mb-3';
   h.textContent = title;
   el.append(h, content);
   return el;
@@ -39,7 +71,7 @@ function step(title: string, content: HTMLElement): HTMLElement {
 
 const status = (text: string, tone: 'info' | 'success' | 'warning' | 'danger' = 'info'): HTMLElement => {
   const s = document.createElement('div');
-  s.className = `text-sm font-medium py-1 px-2 rounded inline-block ${toneColors(tone)}`;
+  s.className = `text-sm font-medium py-1 px-2 rounded inline-block mt-3 ${toneColors(tone)}`;
   s.textContent = text;
   return s;
 };
@@ -59,7 +91,7 @@ function toneColors(tone: string): string {
 
 const resultBox = (label: string, initialValue: string): HTMLElement => {
   const box = document.createElement('div');
-  box.className = 'mt-2 p-3 bg-slate-50 rounded border border-slate-200 text-sm font-mono break-all';
+  box.className = 'mt-4 p-3 bg-slate-50 rounded border border-slate-200 text-sm font-mono break-all';
   const lb = document.createElement('div');
   lb.className = 'text-xs text-slate-500 mb-1';
   lb.textContent = label;
@@ -76,7 +108,13 @@ const btn = (label: string, onClick: () => void | Promise<void>): HTMLButtonElem
     'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none transition';
   b.textContent = label;
   b.onclick = async (): Promise<void> => {
-    await onClick();
+    // Without this catch a failed WebCrypto call rejects silently and the
+    // button looks like it did nothing at all.
+    try {
+      await onClick();
+    } catch (err) {
+      showError(`${label} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
   return b;
 };
@@ -94,12 +132,13 @@ let privateKey: CryptoKey | null = null;
 
 // ---------- Step 1: Choose file ----------
 const chooseHeading = document.createElement('h3');
-chooseHeading.className = 'text-lg font-semibold text-slate-800 mb-2';
+chooseHeading.className = 'text-lg font-semibold text-slate-800 mb-3';
 chooseHeading.textContent = '1. Choose a file';
 const chooseStep = document.createElement('div');
-chooseStep.className = 'card p-4 mb-3 border-l-4 border-green-500 bg-white shadow-sm';
+chooseStep.className =
+  'p-4 md:p-5 border border-slate-200 border-l-4 border-l-green-500 bg-white shadow-sm rounded-lg';
 chooseStep.append(chooseHeading, fileInput, fileInfo);
-root.append(chooseStep);
+container.append(chooseStep);
 
 fileInput.onchange = () => {
   const file = fileInput.files?.[0];
@@ -118,6 +157,8 @@ fileInput.onchange = () => {
 };
 
 // ---------- Step 2: Strip ----------
+const strippedDownloadBox = document.createElement('div');
+strippedDownloadBox.className = 'mt-4';
 const stripBtn = btn('Strip metadata', async () => {
   const file = fileInput.files?.[0];
   if (!file) {
@@ -135,10 +176,23 @@ const stripBtn = btn('Strip metadata', async () => {
   fileHashBox.querySelector('div:last-child')!.textContent = Array.from(hash)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+
+  // Offer the stripped file for download so the human can verify metadata
+  // removal with an EXIF reader.
+  strippedDownloadBox.innerHTML = '';
+  if (res.stripped) {
+    const url = URL.createObjectURL(res.file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.file.name;
+    a.textContent = `Download stripped file (${res.file.name})`;
+    a.className = 'text-sm text-blue-600 hover:underline';
+    strippedDownloadBox.append(a);
+  }
 });
 const stripStatus = status('Not yet stripped');
 const stripStep = step('2. Strip metadata', stripBtn);
-stripStep.append(document.createTextNode(' '), stripStatus);
+stripStep.append(stripStatus, strippedDownloadBox);
 
 // ---------- Step 3: Encrypt ----------
 const encryptBtn = btn('Encrypt file', async () => {
@@ -161,7 +215,7 @@ const encryptBtn = btn('Encrypt file', async () => {
 });
 const encryptStatus = status('Not yet encrypted');
 const encryptStep = step('3. Encrypt (AES-256-GCM, 1 MB chunks)', encryptBtn);
-encryptStep.append(document.createTextNode(' '), encryptStatus, fileHashBox);
+encryptStep.append(encryptStatus, fileHashBox);
 
 // ---------- Step 4: Wrap key ----------
 const wrapBtn = btn('Wrap key with RSA-OAEP', async () => {
@@ -169,16 +223,9 @@ const wrapBtn = btn('Wrap key with RSA-OAEP', async () => {
     alert('Encrypt a file first');
     return;
   }
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    aesKeyRaw as unknown as BufferSource,
-    { name: 'AES-GCM' },
-    false,
-    ['wrapKey', 'unwrapKey'],
-  );
   const { publicKey, privateKey: priv } = await generateRoleKeyPair();
   privateKey = priv;
-  wrappedKey = await wrapKey(cryptoKey, publicKey);
+  wrappedKey = await wrapAesKeyBytes(aesKeyRaw, publicKey);
   wrapStatus.textContent = 'Key wrapped (RSA-OAEP 2048)';
   wrapStatus.className = 'text-sm font-medium py-1 px-2 rounded inline-block bg-green-100 text-green-800';
   wrappedKeyBox.querySelector('div:last-child')!.textContent = Array.from(wrappedKey)
@@ -187,7 +234,7 @@ const wrapBtn = btn('Wrap key with RSA-OAEP', async () => {
 });
 const wrapStatus = status('Key not yet wrapped');
 const wrapStep = step('4. Wrap AES key (RSA-OAEP 2048)', wrapBtn);
-wrapStep.append(document.createTextNode(' '), wrapStatus, wrappedKeyBox);
+wrapStep.append(wrapStatus, wrappedKeyBox);
 
 // ---------- Step 5: Decrypt ----------
 const decryptBtn = btn('Unwrap & decrypt', async () => {
@@ -195,11 +242,10 @@ const decryptBtn = btn('Unwrap & decrypt', async () => {
     alert('Wrap a key first');
     return;
   }
-  const unwrapped = await unwrapKey(wrappedKey, privateKey);
-  const exported = await crypto.subtle.exportKey('raw', unwrapped);
+  const rawAesKey = await unwrapAesKeyBytes(wrappedKey, privateKey);
   const decrypted = await decryptFile(
     encryptedChunks,
-    new Uint8Array(exported),
+    rawAesKey,
     totalBytes,
   );
   decryptStatus.textContent = `Decrypted ${(decrypted.length / 1024).toFixed(1)} KB`;
@@ -211,7 +257,7 @@ const decryptBtn = btn('Unwrap & decrypt', async () => {
   a.href = url;
   a.download = (fileInput.files?.[0]?.name || 'decrypted.bin') + '.dec';
   a.textContent = 'Download decrypted file';
-  a.className = 'mt-2 text-sm text-blue-600 hover:underline';
+  a.className = 'text-sm text-blue-600 hover:underline';
   downloadBox.innerHTML = '';
   downloadBox.append(a);
 
@@ -230,9 +276,9 @@ const decryptBtn = btn('Unwrap & decrypt', async () => {
 });
 const decryptStatus = status('Not yet decrypted');
 const decryptStep = step('5. Unwrap & decrypt', decryptBtn);
-decryptStep.append(document.createTextNode(' '), decryptStatus);
+decryptStep.append(decryptStatus);
 const downloadBox = document.createElement('div');
-downloadBox.className = 'mt-3';
+downloadBox.className = 'mt-4';
 decryptStep.append(downloadBox);
 
 const integrityBox = resultBox('Integrity check', '—');
@@ -252,10 +298,10 @@ const sealBtn = btn('Seal demo payload (community key)', async () => {
 });
 const sealStatus = status('Payload not yet sealed');
 const sealResult = document.createElement('div');
-sealResult.className = 'mt-2 p-3 bg-slate-50 rounded border border-slate-200 text-sm font-mono break-all';
+sealResult.className = 'mt-4 p-3 bg-slate-50 rounded border border-slate-200 text-sm font-mono break-all';
 sealResult.textContent = '—';
 const sealStep = step('6. Bonus: seal/unseal payload (community key)', sealBtn);
-sealStep.append(document.createTextNode(' '), sealStatus, sealResult);
+sealStep.append(sealStatus, sealResult);
 
 // ---------- BucketCount demo ----------
 const bucketBtn = btn('Run bucketCount edge cases', () => {
@@ -263,13 +309,12 @@ const bucketBtn = btn('Run bucketCount edge cases', () => {
   bucketResult.textContent = `bucketCount(c,5): ${cases}`;
 });
 const bucketResult = document.createElement('div');
-bucketResult.className = 'mt-2 text-sm text-slate-600';
+bucketResult.className = 'mt-4 text-sm text-slate-600';
 bucketResult.textContent = '—';
 const bucketStep = step('7. Bonus: bucketCount (small-group protection)', bucketBtn);
-bucketStep.append(document.createTextNode(' '), bucketResult);
+bucketStep.append(bucketResult);
 
-root.append(
-  chooseStep,
+container.append(
   stripStep,
   encryptStep,
   wrapStep,
@@ -277,3 +322,8 @@ root.append(
   sealStep,
   bucketStep,
 );
+
+root.append(container);
+} catch (err) {
+  showError(err instanceof Error ? err.message : String(err));
+}
