@@ -64,3 +64,9 @@ export {
   HASH_STREAM_CHUNK_BYTES,
   hashFile,
 } from './hashFile';
+export {
+  type StorageBackend,
+  MemoryStorage,
+  IndexedDbStorage,
+  SecureStore,
+} from './secureStore';
