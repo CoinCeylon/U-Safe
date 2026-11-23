@@ -21,3 +21,16 @@ export {
   computeZeroNodes,
   MerkleTree,
 } from './merkle';
+export {
+  DOMAIN_TAG_FILE_KEY,
+  FILE_CHUNK_BYTES,
+  GCM_IV_SIZE,
+  AES_KEY_SIZE,
+  GCM_TAG_SIZE,
+  deriveFileKey,
+  encryptBytes,
+  decryptBytes,
+  type EncryptedChunk,
+  encryptFile,
+  decryptFile,
+} from './file';

@@ -6,3 +6,4 @@ M011 | done | Hash adapter: domain-separated Sha256Adapter with length-prefixed 
 M012 | done | Student secret derivation via HKDF-SHA256 over a wallet signature (fixed message `U-Safe student secret v1|<universityId>`) with unit tests
 M013 | done | Commitments and nullifiers: commitment, supportNullifier, filingNullifier (slots 0/1), inboxKey, each with distinct domain tags; cross-value separation tests
 M014 | done | Merkle tree: depth-20 incremental tree with insert, root, proof, static verify; zero-node precomputation; domain-separated inner hashing; tests for 1, 2, 1000 leaves and tampered/wrong proofs
+M015 | done | File encryption: AES-256-GCM encryptBytes/decryptBytes (random 96-bit IV prepended), deriveFileKey, encryptFile/decryptFile with 1 MB chunking each with own IV+auth tag; tests include multi-chunk round-trip, tampered byte rejection, wrong-key rejection, out-of-order chunks
