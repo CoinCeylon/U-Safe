@@ -274,3 +274,4 @@ export const buildApp = async (
 
   return app;
 };
+export { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';

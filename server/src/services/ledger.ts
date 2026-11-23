@@ -9,6 +9,7 @@ export interface EnrollmentReceipt {
 
 export interface EnrollmentLedger {
   enrollCommitment(universityId: string, commitment: string): EnrollmentReceipt;
+  verifyEnrollmentProof?(proof: unknown): boolean | Promise<boolean>;
 }
 
 const DOMAIN_TAG_MERKLE_INNER = 'merkle-inner';
@@ -88,5 +89,9 @@ export class StubLedger implements EnrollmentLedger {
       'hex',
     );
     return { leafIndex, path, root };
+  }
+
+  verifyEnrollmentProof(): boolean {
+    return true;
   }
 }
