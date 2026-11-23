@@ -1,4 +1,0 @@
-To: student@example.edu
-Subject: U-Safe test mail
-
-This is a test message. Code: 123456

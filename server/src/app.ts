@@ -1,13 +1,28 @@
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import type Database from 'better-sqlite3';
+import { z } from 'zod';
 import type { Config } from './config.js';
 import { getUniversity, listUniversities } from './services/universities.js';
 import { importRoster } from './services/roster.js';
+import { createMailer, type Mailer } from './services/mailer.js';
+import { OtpService } from './services/otp.js';
+import { TicketService } from './services/tickets.js';
+import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
+import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
+
+const otpRequestSchema = z.object({ email: z.string().email() });
+const otpVerifySchema = z.object({ email: z.string().email(), code: z.string().min(1) });
+const enrollSchema = z.object({
+  ticket: z.string().min(1),
+  commitment: z.string().regex(/^[0-9a-fA-F]{64}$/),
+});
 
 export const buildApp = async (
   config: Config,
   db: Database.Database,
+  mailer: Mailer = createMailer(config),
+  ledger: EnrollmentLedger = new StubLedger(),
 ): Promise<FastifyInstance> => {
   const app = Fastify({
     logger: {
@@ -15,6 +30,10 @@ export const buildApp = async (
     },
     logController: new LogController({ disableRequestLogging: true }),
   });
+
+  const otp = new OtpService(db, mailer, config.EMAIL_HASH_SALT);
+  const tickets = new TicketService(db, config.EMAIL_HASH_SALT);
+  const enrollment = new EnrollmentService(db, tickets, ledger);
 
   await app.register(cors, {
     origin: config.WEB_ORIGIN,
@@ -89,6 +108,61 @@ export const buildApp = async (
     } catch (error) {
       reply.code(400);
       return { error: (error as Error).message };
+    }
+  });
+
+  app.post('/api/otp/request', async (request, reply) => {
+    const parsed = otpRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid request' };
+    }
+
+    const outcome = await otp.request(parsed.data.email, request.ip);
+    if (outcome === 'rate_limited') {
+      reply.code(429);
+      return { error: 'too many requests' };
+    }
+    return { ok: true };
+  });
+
+  app.post('/api/otp/verify', (request, reply) => {
+    const parsed = otpVerifySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return { ok: false };
+    }
+
+    const outcome = otp.verify(parsed.data.email, parsed.data.code, request.ip);
+    if (outcome === 'rate_limited') {
+      reply.code(429);
+      return { error: 'too many requests' };
+    }
+    if (outcome !== 'ok') {
+      return { ok: false };
+    }
+
+    const issued = tickets.issue(parsed.data.email);
+    if (issued === null) {
+      return { ok: false };
+    }
+    return issued;
+  });
+
+  app.post('/api/enroll', (request, reply) => {
+    const parsed = enrollSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid request' };
+    }
+
+    try {
+      return enrollment.enroll(parsed.data.ticket, parsed.data.commitment.toLowerCase());
+    } catch (error) {
+      if (error instanceof EnrollmentError) {
+        reply.code(400);
+        return { error: error.message };
+      }
+      throw error;
     }
   });
 
