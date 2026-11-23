@@ -42,6 +42,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local dev mailbox messages contain recipient addresses and OTP codes
+server/.dev-mailbox/
+
 # SQLite databases (keep schema/migrations and seed scripts in Git)
 *.db
 *.db-journal
