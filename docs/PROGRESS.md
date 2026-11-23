@@ -20,3 +20,4 @@ M025 | done | Roster import endpoint POST /api/university/:id/roster parsing CSV
 M026 | done | Mailer interface with ConsoleMailer (writes to git-ignored server/.dev-mailbox, prints only code/path) and SmtpMailer (nodemailer), selected by MAIL_MODE, with tests and .env.example
 M027 | done | OTP request/verify routes with hash-only code storage, constant-time comparison, attempt locking, expiry, generic responses and in-memory email/IP rate limits, with tests
 M028 | done | Successful verify issues a single-use 15-minute enrollment ticket returned as {ticket, universityId}; atomic consume rejects reuse and expiry, with tests
+M029 | done | POST /api/enroll burns the ticket transactionally, checks ceiling, enrolls via a stub ledger and returns leaf index/path/root plus wrapped key without storing the commitment beside the roster row, with tests

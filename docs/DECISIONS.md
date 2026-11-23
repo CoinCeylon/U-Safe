@@ -24,3 +24,11 @@ Record package names, versions and adaptations here.
   ticket with a conditional `UPDATE ... WHERE used = 0 AND expires_at > now`, so
   double use and expiry are both rejected; it returns `{ universityId, rosterId }` for
   the later enrollment milestone.
+- `POST /api/enroll` runs the ticket burn, enrollment check and roster update in one
+  SQLite transaction; errors roll the ticket back so it remains usable. The ceiling is
+  the count of enrolled roster rows for the university. The commitment is never written
+  to `roster`. `StubLedger` is an in-memory stand-in behind `EnrollmentLedger` until
+  M035/M037 define the real adapter; it uses the same length-prefixed domain-separated
+  SHA-256 as `@usafe/crypto`, so its paths verify with `MerkleTree.verify`. `communityKeyWrapped`
+  currently returns `community_key_wrapped_for_ugc` as the only stored wrapped copy;
+  M065 will replace this with the student-delivery wrapping.

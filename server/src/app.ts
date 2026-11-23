@@ -8,14 +8,21 @@ import { importRoster } from './services/roster.js';
 import { createMailer, type Mailer } from './services/mailer.js';
 import { OtpService } from './services/otp.js';
 import { TicketService } from './services/tickets.js';
+import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
+import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
 
 const otpRequestSchema = z.object({ email: z.string().email() });
 const otpVerifySchema = z.object({ email: z.string().email(), code: z.string().min(1) });
+const enrollSchema = z.object({
+  ticket: z.string().min(1),
+  commitment: z.string().regex(/^[0-9a-fA-F]{64}$/),
+});
 
 export const buildApp = async (
   config: Config,
   db: Database.Database,
   mailer: Mailer = createMailer(config),
+  ledger: EnrollmentLedger = new StubLedger(),
 ): Promise<FastifyInstance> => {
   const app = Fastify({
     logger: {
@@ -26,6 +33,7 @@ export const buildApp = async (
 
   const otp = new OtpService(db, mailer, config.EMAIL_HASH_SALT);
   const tickets = new TicketService(db, config.EMAIL_HASH_SALT);
+  const enrollment = new EnrollmentService(db, tickets, ledger);
 
   await app.register(cors, {
     origin: config.WEB_ORIGIN,
@@ -138,6 +146,24 @@ export const buildApp = async (
       return { ok: false };
     }
     return issued;
+  });
+
+  app.post('/api/enroll', (request, reply) => {
+    const parsed = enrollSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid request' };
+    }
+
+    try {
+      return enrollment.enroll(parsed.data.ticket, parsed.data.commitment.toLowerCase());
+    } catch (error) {
+      if (error instanceof EnrollmentError) {
+        reply.code(400);
+        return { error: error.message };
+      }
+      throw error;
+    }
   });
 
   return app;
