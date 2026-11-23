@@ -7,3 +7,4 @@ M012 | done | Student secret derivation via HKDF-SHA256 over a wallet signature 
 M013 | done | Commitments and nullifiers: commitment, supportNullifier, filingNullifier (slots 0/1), inboxKey, each with distinct domain tags; cross-value separation tests
 M014 | done | Merkle tree: depth-20 incremental tree with insert, root, proof, static verify; zero-node precomputation; domain-separated inner hashing; tests for 1, 2, 1000 leaves and tampered/wrong proofs
 M015 | done | File encryption: AES-256-GCM encryptBytes/decryptBytes (random 96-bit IV prepended), deriveFileKey, encryptFile/decryptFile with 1 MB chunking each with own IV+auth tag; tests include multi-chunk round-trip, tampered byte rejection, wrong-key rejection, out-of-order chunks
+M016 | done | Role keypairs and key wrapping: RSA-OAEP 2048 (SHA-256) key pair generation, JWK export/import, wrapKey(aesKey, publicKey), unwrapKey(wrapped, privateKey); wrong private key and tampered wrapped key both rejected

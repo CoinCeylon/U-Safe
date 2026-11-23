@@ -34,3 +34,16 @@ export {
   encryptFile,
   decryptFile,
 } from './file';
+export {
+  RSA_KEY_SIZE,
+  generateRoleKeyPair,
+  exportJwk,
+  importJwk,
+  exportPublicKeyJwk,
+  exportPrivateKeyJwk,
+  importPublicKeyJwk,
+  importPrivateKeyJwk,
+  wrapKey,
+  unwrapKey,
+  generateAesKey,
+} from './keys';
