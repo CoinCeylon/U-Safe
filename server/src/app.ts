@@ -11,7 +11,7 @@ import { TicketService } from './services/tickets.js';
 import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
 import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
 import { clientIp } from './services/clientIp.js';
-import { addClient, removeClient } from './services/events.js';
+import { addClient, publish, removeClient } from './services/events.js';
 import {
   createChallenge,
   devLogin,
@@ -353,6 +353,16 @@ export const buildApp = async (
     request.raw.on('close', () => {
       removeClient(client);
     });
+  });
+
+  app.post('/api/events/publish', (request) => {
+    const body = (request.body ?? {}) as { type?: string; id?: string };
+    const event = {
+      type: typeof body.type === 'string' ? body.type : 'test.event',
+      id: typeof body.id === 'string' ? body.id : `evt-${Date.now()}`,
+    };
+    publish(event);
+    return { ok: true, event };
   });
 
   return app;

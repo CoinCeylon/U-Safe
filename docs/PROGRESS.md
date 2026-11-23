@@ -1,3 +1,9 @@
+M001 | done | Monorepo created with npm workspaces, workspace folders, .gitignore and .nvmrc
+M002 | done | TypeScript baseline with strict tsconfig.base.json and root typecheck script
+M003 | done | ESLint, Prettier, Vitest, root lint/format/test/check scripts and shared smoke test
+M004 | done | Shared constants, types and zod schemas implemented
+M005 | done | Vite multi-page web app shell with Tailwind configured
+M006 | done | Design system primitives and showcase page added
 M007 | done | Hash router and portal frame added for all portals
 M008 | done | Fastify server skeleton with health endpoint and graceful shutdown
 M009 | done | SQLite database with migration runner and 001_init
