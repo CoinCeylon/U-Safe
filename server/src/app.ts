@@ -10,6 +10,7 @@ import { OtpService } from './services/otp.js';
 import { TicketService } from './services/tickets.js';
 import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
 import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
+import { clientIp } from './services/clientIp.js';
 import { addClient, removeClient } from './services/events.js';
 import {
   createChallenge,
@@ -167,7 +168,7 @@ export const buildApp = async (
       return { error: 'invalid request' };
     }
 
-    const outcome = await otp.request(parsed.data.email, request.ip);
+    const outcome = await otp.request(parsed.data.email, clientIp(request));
     if (outcome === 'rate_limited') {
       reply.code(429);
       return { error: 'too many requests' };
@@ -181,7 +182,7 @@ export const buildApp = async (
       return { ok: false };
     }
 
-    const outcome = otp.verify(parsed.data.email, parsed.data.code, request.ip);
+    const outcome = otp.verify(parsed.data.email, parsed.data.code, clientIp(request));
     if (outcome === 'rate_limited') {
       reply.code(429);
       return { error: 'too many requests' };

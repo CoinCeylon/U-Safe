@@ -25,3 +25,4 @@ M030 | done | Evidence blob store added with POST /api/blobs and GET /api/blobs/
 M031 | done | Added requireEnrollmentProof Fastify guard that requires a proof object in the request body and delegates verification to the ledger adapter (stub), returning 401 when missing
 M032 | done | Staff auth added with challenge, signature-based login, hashed sessions, requireStaff hook, and DEV_LOGIN dev-login route
 M033 | done | Added GET /api/events SSE hub with publish(event) broadcaster for id/type-only events
+M034 | done | Added privacy.test.ts scanning server source for forbidden logging patterns and verifying logger redaction
