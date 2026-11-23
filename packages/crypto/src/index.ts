@@ -70,3 +70,8 @@ export {
   IndexedDbStorage,
   SecureStore,
 } from './secureStore';
+export {
+  randomDelayMs,
+  SubmitQueue,
+  bucketCount,
+} from './anonymity';
