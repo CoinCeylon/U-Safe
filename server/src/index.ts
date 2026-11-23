@@ -1,14 +1,17 @@
 import { loadConfig } from './config.js';
 import { buildApp } from './app.js';
+import { openDatabase } from './db/index.js';
 
 const main = async (): Promise<void> => {
   const config = loadConfig();
+  const db = openDatabase(config.DATABASE_PATH, './migrations');
   const app = await buildApp(config);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
     try {
       await app.close();
+      db.close();
       process.exit(0);
     } catch (error) {
       app.log.error(error);

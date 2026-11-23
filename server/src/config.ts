@@ -6,6 +6,7 @@ const envSchema = z.object({
   HOST: z.string().default('127.0.0.1'),
   CHAIN_MODE: z.enum(['mock', 'testnet']).default('mock'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
+  DATABASE_PATH: z.string().default('./data/usafe.db'),
 });
 
 export type Config = z.infer<typeof envSchema>;
