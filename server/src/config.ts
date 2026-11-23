@@ -7,6 +7,7 @@ const envSchema = z.object({
   CHAIN_MODE: z.enum(['mock', 'testnet']).default('mock'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   DATABASE_PATH: z.string().default('./data/usafe.db'),
+  EMAIL_HASH_SALT: z.string().default('dev-email-hash-salt'),
 });
 
 export type Config = z.infer<typeof envSchema>;

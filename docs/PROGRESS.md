@@ -16,3 +16,4 @@ M021 | done | Anonymity helpers: randomDelayMs(min, max) using crypto.getRandomV
 M022 | done | Crypto playground page (apps/web/src/dev/crypto.html + crypto.ts): choose file → strip metadata → encrypt (AES-256-GCM, 1 MB chunks) → show SHA-256 hash → wrap AES key with RSA-OAEP 2048 → unwrap & decrypt → download decrypted file; bonus: community key seal/unseal, bucketCount edge cases
 M023 | done | Core database schema added via migration 002_core.sql with universities, roster, otp, tickets, blobs, staff, sessions and events tables (emails stored only as salted hashes)
 M024 | done | University registry service with create/list/get, GET /api/universities and GET /api/universities/:id routes, plus seed script creating three demo universities
+M025 | done | Roster import endpoint POST /api/university/:id/roster parsing CSV, validating emails and domains, rejecting duplicates, storing salted email hashes with per-row error reporting
