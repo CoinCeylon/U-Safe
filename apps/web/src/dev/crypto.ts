@@ -18,7 +18,23 @@ if (!root) {
   throw new Error('Missing #app root');
 }
 
-const fileInput = document.createElement('input');
+// Top-level error banner so JS failures are visible instead of a blank page.
+const errorBanner = document.createElement('div');
+errorBanner.className =
+  'fixed top-0 left-0 right-0 bg-red-500 text-white p-3 z-50 hidden';
+const errorMsg = document.createElement('div');
+errorMsg.className = 'text-sm font-mono break-all';
+errorBanner.append(errorMsg);
+root.append(errorBanner);
+
+function showError(msg: string): void {
+  errorMsg.textContent = msg;
+  errorBanner.classList.remove('hidden');
+  console.error(msg);
+}
+
+try {
+  const fileInput = document.createElement('input');
 fileInput.type = 'file';
 fileInput.accept = '*/*';
 fileInput.className =
@@ -29,7 +45,7 @@ fileInfo.className = 'text-sm text-slate-500 mb-4';
 
 function step(title: string, content: HTMLElement): HTMLElement {
   const el = document.createElement('div');
-  el.className = 'card p-4 mb-3 border-l-4 border-blue-500 bg-white shadow-sm';
+  el.className = 'p-4 mb-3 border-l-4 border-blue-500 bg-white shadow-sm rounded-lg';
   const h = document.createElement('h3');
   h.className = 'text-lg font-semibold text-slate-800 mb-2';
   h.textContent = title;
@@ -97,7 +113,7 @@ const chooseHeading = document.createElement('h3');
 chooseHeading.className = 'text-lg font-semibold text-slate-800 mb-2';
 chooseHeading.textContent = '1. Choose a file';
 const chooseStep = document.createElement('div');
-chooseStep.className = 'card p-4 mb-3 border-l-4 border-green-500 bg-white shadow-sm';
+chooseStep.className = 'p-4 mb-3 border-l-4 border-green-500 bg-white shadow-sm rounded-lg';
 chooseStep.append(chooseHeading, fileInput, fileInfo);
 root.append(chooseStep);
 
@@ -277,3 +293,6 @@ root.append(
   sealStep,
   bucketStep,
 );
+} catch (err) {
+  showError(err instanceof Error ? err.message : String(err));
+}
