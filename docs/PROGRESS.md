@@ -21,3 +21,4 @@ M026 | done | Mailer interface with ConsoleMailer (writes to git-ignored server/
 M027 | done | OTP request/verify routes with hash-only code storage, constant-time comparison, attempt locking, expiry, generic responses and in-memory email/IP rate limits, with tests
 M028 | done | Successful verify issues a single-use 15-minute enrollment ticket returned as {ticket, universityId}; atomic consume rejects reuse and expiry, with tests
 M029 | done | POST /api/enroll burns the ticket transactionally, checks ceiling, enrolls via a stub ledger and returns leaf index/path/root plus wrapped key without storing the commitment beside the roster row, with tests
+M030 | done | Evidence blob store added with POST /api/blobs and GET /api/blobs/:hash, SHA-256 verification, content-type enforcement, 25 MB limit, and disk storage under server/data/blobs

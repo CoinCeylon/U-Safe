@@ -10,6 +10,19 @@ import { OtpService } from './services/otp.js';
 import { TicketService } from './services/tickets.js';
 import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
 import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
+import {
+  MAX_BLOB_SIZE,
+  baseContentType,
+  blobExists,
+  blobFileSize,
+  createBlobReadStream,
+  isOctetStreamContentType,
+  isValidBlobHash,
+  normalizeBlobHash,
+  resolveBlobDir,
+  saveBlob,
+  sha256Buffer,
+} from './services/blobs.js';
 
 const otpRequestSchema = z.object({ email: z.string().email() });
 const otpVerifySchema = z.object({ email: z.string().email(), code: z.string().min(1) });
@@ -21,14 +34,24 @@ const enrollSchema = z.object({
 export const buildApp = async (
   config: Config,
   db: Database.Database,
-  mailer: Mailer = createMailer(config),
+  mailerOrBlobDir?: Mailer | string,
   ledger: EnrollmentLedger = new StubLedger(),
+  blobDir?: string,
 ): Promise<FastifyInstance> => {
+  let mailer: Mailer = createMailer(config);
+  let resolvedBlobDir = resolveBlobDir(blobDir);
+  if (typeof mailerOrBlobDir === 'string') {
+    resolvedBlobDir = resolveBlobDir(mailerOrBlobDir);
+  } else if (mailerOrBlobDir !== undefined) {
+    mailer = mailerOrBlobDir;
+    resolvedBlobDir = resolveBlobDir(blobDir);
+  }
   const app = Fastify({
     logger: {
       level: 'info',
     },
     logController: new LogController({ disableRequestLogging: true }),
+    bodyLimit: MAX_BLOB_SIZE,
   });
 
   const otp = new OtpService(db, mailer, config.EMAIL_HASH_SALT);
@@ -45,6 +68,24 @@ export const buildApp = async (
   });
   app.addContentTypeParser('text/csv', { parseAs: 'string' }, (_req, body, done) => {
     done(null, body);
+  });
+
+  app.addContentTypeParser(
+    /^application\/octet-?stream/i,
+    { parseAs: 'buffer' },
+    (_req, body, done) => {
+      done(null, body);
+    },
+  );
+
+  app.addHook('onRequest', (request, reply, done) => {
+    if (request.method === 'POST' && request.url.split('?')[0] === '/api/blobs') {
+      if (!isOctetStreamContentType(baseContentType(request.headers['content-type']))) {
+        reply.code(415).send({ error: 'unsupported media type' });
+        return;
+      }
+    }
+    done();
   });
 
   app.addHook('onResponse', (request, reply, done) => {
@@ -164,6 +205,71 @@ export const buildApp = async (
       }
       throw error;
     }
+  });
+
+  app.post('/api/blobs', async (request, reply) => {
+    const contentType = baseContentType(request.headers['content-type']);
+    if (!isOctetStreamContentType(contentType)) {
+      reply.code(415);
+      return { error: 'unsupported media type' };
+    }
+
+    const rawHash =
+      (request.query as { hash?: unknown } | undefined)?.hash ??
+      request.headers['x-hash'] ??
+      request.headers['x-content-hash'] ??
+      request.headers['content-hash'] ??
+      request.headers['x-blob-hash'];
+
+    if (typeof rawHash !== 'string' || !isValidBlobHash(rawHash)) {
+      reply.code(400);
+      return { error: 'missing or invalid hash' };
+    }
+    const hash = normalizeBlobHash(rawHash);
+
+    const body = request.body;
+    const bytes = Buffer.isBuffer(body)
+      ? body
+      : Buffer.isBuffer(body)
+        ? body
+        : Buffer.from(
+            typeof body === 'string'
+              ? body
+              : body === null || body === undefined
+                ? ''
+                : JSON.stringify(body),
+            'utf8',
+          );
+
+    if (bytes.length > MAX_BLOB_SIZE) {
+      reply.code(413);
+      return { error: 'payload too large' };
+    }
+
+    const actual = sha256Buffer(bytes);
+    if (actual !== hash) {
+      reply.code(400);
+      return { error: 'hash mismatch' };
+    }
+
+    saveBlob(db, resolvedBlobDir, hash, bytes);
+    return { hash, size: bytes.length };
+  });
+
+  app.get<{ Params: { hash: string } }>('/api/blobs/:hash', async (request, reply) => {
+    const hash = normalizeBlobHash(request.params.hash);
+    if (!isValidBlobHash(hash)) {
+      reply.code(400);
+      return { error: 'invalid hash' };
+    }
+    if (!blobExists(resolvedBlobDir, hash)) {
+      reply.code(404);
+      return { error: 'not found' };
+    }
+
+    reply.header('content-type', 'application/octet-stream');
+    reply.header('content-length', blobFileSize(resolvedBlobDir, hash));
+    return reply.send(createBlobReadStream(resolvedBlobDir, hash));
   });
 
   return app;
