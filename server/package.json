@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; tsx watch src/index.ts'",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "seed": "tsx src/seed.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.4.3",
