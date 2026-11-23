@@ -46,6 +46,9 @@ export {
   wrapKey,
   unwrapKey,
   generateAesKey,
+  importAesKeyBytes,
+  wrapAesKeyBytes,
+  unwrapAesKeyBytes,
 } from './keys';
 export {
   generateCommunityKey,

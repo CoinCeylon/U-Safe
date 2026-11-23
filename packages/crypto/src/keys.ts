@@ -111,6 +111,10 @@ export async function wrapKey(
 
 // Unwraps (decrypts) wrapped AES key bytes using the recipient's RSA-OAEP
 // private key. Throws if wrapped with a different public key or tampered.
+//
+// The unwrapped key is extractable on purpose: callers need the raw key bytes
+// to feed `decryptFile`, which works on raw AES-256-GCM keys rather than
+// CryptoKey objects.
 export async function unwrapKey(
   wrapped: Uint8Array,
   privateKey: CryptoKey,
@@ -124,7 +128,7 @@ export async function unwrapKey(
       hash: { name: 'SHA-256' },
     } as unknown as Algorithm,
     { name: 'AES-GCM', length: 256 },
-    false, // the unwrapped AES key is not extractable here
+    true, // extractable so the raw key bytes can be exported for decryption
     ['encrypt', 'decrypt'],
   );
 }
@@ -136,4 +140,46 @@ export async function generateAesKey(): Promise<CryptoKey> {
     true,
     ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'],
   );
+}
+
+// Imports raw AES-256 key bytes as an AES-GCM CryptoKey that can be wrapped.
+//
+// Two WebCrypto details make this necessary instead of calling `importKey`
+// directly in application code:
+//   - `wrapKey` with the 'jwk' format only accepts an *extractable* key.
+//   - The JWK produced by wrapping carries the key's usages as `key_ops`, so
+//     the key must be able to encrypt and decrypt, otherwise the later
+//     `unwrapKey` call fails with "Key operations and usage mismatch".
+export async function importAesKeyBytes(raw: Uint8Array): Promise<CryptoKey> {
+  if (raw.length !== 32) {
+    throw new Error(`AES key must be 32 bytes, got ${raw.length}`);
+  }
+  return crypto.subtle.importKey(
+    'raw',
+    raw as unknown as BufferSource,
+    { name: 'AES-GCM' },
+    true,
+    ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'],
+  );
+}
+
+// Wraps raw AES-256 key bytes with an RSA-OAEP public key and returns the
+// wrapped bytes. This is the convenient entry point for applications that
+// hold the per-file key as raw bytes (see `encryptFile`).
+export async function wrapAesKeyBytes(
+  rawAesKey: Uint8Array,
+  publicKey: CryptoKey,
+): Promise<Uint8Array> {
+  return wrapKey(await importAesKeyBytes(rawAesKey), publicKey);
+}
+
+// Unwraps wrapped AES key bytes with an RSA-OAEP private key and returns the
+// raw AES-256 key bytes, ready to be handed to `decryptFile`.
+export async function unwrapAesKeyBytes(
+  wrapped: Uint8Array,
+  privateKey: CryptoKey,
+): Promise<Uint8Array> {
+  const key = await unwrapKey(wrapped, privateKey);
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return new Uint8Array(raw);
 }

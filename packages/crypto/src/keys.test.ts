@@ -9,6 +9,9 @@ import {
   wrapKey,
   unwrapKey,
   generateAesKey,
+  importAesKeyBytes,
+  wrapAesKeyBytes,
+  unwrapAesKeyBytes,
 } from './keys';
 
 const encoder = new TextEncoder();
@@ -130,5 +133,50 @@ describe('generateAesKey', () => {
     expect(key.extractable).toBe(true);
     expect(key.usages).toContain('encrypt');
     expect(key.usages).toContain('decrypt');
+  });
+});
+
+describe('raw AES key byte helpers', () => {
+  it('importAesKeyBytes imports an extractable key with all needed usages', async () => {
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    const key = await importAesKeyBytes(raw);
+    expect(key.extractable).toBe(true);
+    expect(key.usages).toContain('wrapKey');
+    expect(key.usages).toContain('encrypt');
+    expect(key.usages).toContain('decrypt');
+  });
+
+  it('importAesKeyBytes rejects a key of the wrong size', async () => {
+    await expect(importAesKeyBytes(new Uint8Array(16))).rejects.toThrow(
+      /32 bytes/,
+    );
+  });
+
+  it('wraps raw key bytes and unwraps them back to the same bytes', async () => {
+    const { publicKey, privateKey } = await generateRoleKeyPair();
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+
+    const wrapped = await wrapAesKeyBytes(raw, publicKey);
+    expect(wrapped.length).toBeGreaterThan(0);
+
+    const unwrapped = await unwrapAesKeyBytes(wrapped, privateKey);
+    expect(unwrapped).toEqual(raw);
+  });
+
+  it('unwraps raw key bytes with the wrong private key fails', async () => {
+    const { publicKey } = await generateRoleKeyPair();
+    const { privateKey: wrongPrivateKey } = await generateRoleKeyPair();
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+
+    const wrapped = await wrapAesKeyBytes(raw, publicKey);
+    await expect(unwrapAesKeyBytes(wrapped, wrongPrivateKey)).rejects.toThrow();
+  });
+
+  it('unwrapped key is extractable so it can be exported as raw bytes', async () => {
+    const { publicKey, privateKey } = await generateRoleKeyPair();
+    const aesKey = await generateAesKey();
+    const wrapped = await wrapKey(aesKey, publicKey);
+    const unwrapped = await unwrapKey(wrapped, privateKey);
+    expect(unwrapped.extractable).toBe(true);
   });
 });

@@ -9,8 +9,8 @@ import {
   openPayload,
   sealPayload,
   stripImage,
-  unwrapKey,
-  wrapKey,
+  unwrapAesKeyBytes,
+  wrapAesKeyBytes,
 } from '@usafe/crypto';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -92,7 +92,13 @@ const btn = (label: string, onClick: () => void | Promise<void>): HTMLButtonElem
     'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none transition';
   b.textContent = label;
   b.onclick = async (): Promise<void> => {
-    await onClick();
+    // Without this catch a failed WebCrypto call rejects silently and the
+    // button looks like it did nothing at all.
+    try {
+      await onClick();
+    } catch (err) {
+      showError(`${label} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
   return b;
 };
@@ -200,16 +206,9 @@ const wrapBtn = btn('Wrap key with RSA-OAEP', async () => {
     alert('Encrypt a file first');
     return;
   }
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    aesKeyRaw as unknown as BufferSource,
-    { name: 'AES-GCM' },
-    false,
-    ['wrapKey', 'unwrapKey'],
-  );
   const { publicKey, privateKey: priv } = await generateRoleKeyPair();
   privateKey = priv;
-  wrappedKey = await wrapKey(cryptoKey, publicKey);
+  wrappedKey = await wrapAesKeyBytes(aesKeyRaw, publicKey);
   wrapStatus.textContent = 'Key wrapped (RSA-OAEP 2048)';
   wrapStatus.className = 'text-sm font-medium py-1 px-2 rounded inline-block bg-green-100 text-green-800';
   wrappedKeyBox.querySelector('div:last-child')!.textContent = Array.from(wrappedKey)
@@ -226,11 +225,10 @@ const decryptBtn = btn('Unwrap & decrypt', async () => {
     alert('Wrap a key first');
     return;
   }
-  const unwrapped = await unwrapKey(wrappedKey, privateKey);
-  const exported = await crypto.subtle.exportKey('raw', unwrapped);
+  const rawAesKey = await unwrapAesKeyBytes(wrappedKey, privateKey);
   const decrypted = await decryptFile(
     encryptedChunks,
-    new Uint8Array(exported),
+    rawAesKey,
     totalBytes,
   );
   decryptStatus.textContent = `Decrypted ${(decrypted.length / 1024).toFixed(1)} KB`;
