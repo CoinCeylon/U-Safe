@@ -24,3 +24,4 @@ M029 | done | POST /api/enroll burns the ticket transactionally, checks ceiling,
 M030 | done | Evidence blob store added with POST /api/blobs and GET /api/blobs/:hash, SHA-256 verification, content-type enforcement, 25 MB limit, and disk storage under server/data/blobs
 M031 | done | Added requireEnrollmentProof Fastify guard that requires a proof object in the request body and delegates verification to the ledger adapter (stub), returning 401 when missing
 M032 | done | Staff auth added with challenge, signature-based login, hashed sessions, requireStaff hook, and DEV_LOGIN dev-login route
+M033 | done | Added GET /api/events SSE hub with publish(event) broadcaster for id/type-only events

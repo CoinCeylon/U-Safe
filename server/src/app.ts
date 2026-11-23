@@ -10,6 +10,7 @@ import { OtpService } from './services/otp.js';
 import { TicketService } from './services/tickets.js';
 import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
 import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
+import { addClient, removeClient } from './services/events.js';
 import {
   createChallenge,
   devLogin,
@@ -333,6 +334,28 @@ export const buildApp = async (
     return { staff };
   });
 
+  app.get('/api/events', (request, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    reply.raw.write(': connected\n\n');
+
+    const client = {
+      write: (chunk: string) => reply.raw.write(chunk),
+      end: () => reply.raw.end(),
+    };
+    addClient(client);
+
+    request.raw.on('close', () => {
+      removeClient(client);
+    });
+  });
+
   return app;
 };
 export { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
+
+export { publish } from './services/events.js';
