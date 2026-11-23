@@ -5,3 +5,13 @@ export {
   studentSecretMessage,
   deriveStudentSecret,
 } from './secret';
+export {
+  DOMAIN_TAG_COMMITMENT,
+  DOMAIN_TAG_SUPPORT_NULLIFIER,
+  DOMAIN_TAG_FILING_NULLIFIER,
+  DOMAIN_TAG_INBOX_KEY,
+  commitment,
+  supportNullifier,
+  filingNullifier,
+  inboxKey,
+} from './nullifier';
