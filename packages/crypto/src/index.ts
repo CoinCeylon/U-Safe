@@ -47,3 +47,9 @@ export {
   unwrapKey,
   generateAesKey,
 } from './keys';
+export {
+  generateCommunityKey,
+  type SealedPayload,
+  sealPayload,
+  openPayload,
+} from './payload';
