@@ -64,7 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  db.close();
+  db?.close();
 });
 
 const ticketFor = (address: string): string => tickets.issue(address)?.ticket ?? '';

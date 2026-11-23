@@ -33,7 +33,7 @@ export class ConsoleMailer implements Mailer {
 }
 
 export class SmtpMailer implements Mailer {
-  private readonly transporter: nodemailer.Transporter;
+  private readonly transporter: ReturnType<typeof nodemailer.createTransport>;
   private readonly from: string;
 
   constructor(config: Config) {

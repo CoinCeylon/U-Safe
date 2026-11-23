@@ -1,3 +1,9 @@
+M001 | done | Monorepo created with npm workspaces, workspace folders, .gitignore and .nvmrc
+M002 | done | TypeScript baseline with strict tsconfig.base.json and root typecheck script
+M003 | done | ESLint, Prettier, Vitest, root lint/format/test/check scripts and shared smoke test
+M004 | done | Shared constants, types and zod schemas implemented
+M005 | done | Vite multi-page web app shell with Tailwind configured
+M006 | done | Design system primitives and showcase page added
 M007 | done | Hash router and portal frame added for all portals
 M008 | done | Fastify server skeleton with health endpoint and graceful shutdown
 M009 | done | SQLite database with migration runner and 001_init
@@ -21,3 +27,8 @@ M026 | done | Mailer interface with ConsoleMailer (writes to git-ignored server/
 M027 | done | OTP request/verify routes with hash-only code storage, constant-time comparison, attempt locking, expiry, generic responses and in-memory email/IP rate limits, with tests
 M028 | done | Successful verify issues a single-use 15-minute enrollment ticket returned as {ticket, universityId}; atomic consume rejects reuse and expiry, with tests
 M029 | done | POST /api/enroll burns the ticket transactionally, checks ceiling, enrolls via a stub ledger and returns leaf index/path/root plus wrapped key without storing the commitment beside the roster row, with tests
+M030 | done | Evidence blob store added with POST /api/blobs and GET /api/blobs/:hash, SHA-256 verification, content-type enforcement, 25 MB limit, and disk storage under server/data/blobs
+M031 | done | Added requireEnrollmentProof Fastify guard that requires a proof object in the request body and delegates verification to the ledger adapter (stub), returning 401 when missing
+M032 | done | Staff auth added with challenge, signature-based login, hashed sessions, requireStaff hook, and DEV_LOGIN dev-login route
+M033 | done | Added GET /api/events SSE hub with publish(event) broadcaster for id/type-only events
+M034 | done | Added privacy.test.ts scanning server source for forbidden logging patterns and verifying logger redaction

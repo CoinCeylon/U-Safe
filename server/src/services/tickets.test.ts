@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  db.close();
+  db?.close();
 });
 
 describe('TicketService.issue', () => {

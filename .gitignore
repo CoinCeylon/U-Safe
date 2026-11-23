@@ -45,6 +45,9 @@ pnpm-debug.log*
 # Local dev mailbox messages contain recipient addresses and OTP codes
 server/.dev-mailbox/
 
+# Encrypted evidence blobs (runtime data, never commit)
+server/data/blobs/
+
 # SQLite databases (keep schema/migrations and seed scripts in Git)
 *.db
 *.db-journal
@@ -76,6 +79,7 @@ Thumbs.db
 !.vscode/tasks.json
 *.swp
 *.swo
+roster.csv
 
 # Temporary files
 tmp/
