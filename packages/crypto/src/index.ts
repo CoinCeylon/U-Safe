@@ -60,3 +60,7 @@ export {
   stripExifFromJpegBytes,
   stripImage,
 } from './strip';
+export {
+  HASH_STREAM_CHUNK_BYTES,
+  hashFile,
+} from './hashFile';
