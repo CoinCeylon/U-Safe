@@ -8,4 +8,5 @@ export * from './modal';
 export * from './toast';
 export * from './spinner';
 export * from './emptyState';
+export * from './frame';
 export * from './table';
