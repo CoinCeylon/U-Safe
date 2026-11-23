@@ -16,8 +16,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "vitest run",
-    "check": "npm run typecheck && npm run lint && npm run test",
+    "test": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; vitest run'",
+    "check": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; npm run typecheck && npm run lint && npm run test'",
     "seed": "npm run seed -w server",
     "mail:test": "npm run mail:test -w server"
   },

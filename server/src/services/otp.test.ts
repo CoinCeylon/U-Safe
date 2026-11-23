@@ -60,7 +60,7 @@ beforeEach(() => {
 afterEach(async () => {
   await app?.close();
   app = undefined;
-  db.close();
+  db?.close();
 });
 
 const issueCode = async (service: OtpService): Promise<string> => {
