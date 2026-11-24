@@ -432,13 +432,23 @@ export interface GetStatsInput {
   universityId?: string;
 }
 
+export type ProtectedCount = number | null;
+export type StatsBreakdown<K extends string> = Record<
+  K,
+  ProtectedCount
+> & { other: ProtectedCount };
+export type CategoryStatsBreakdown = StatsBreakdown<Exclude<Category, 'other'>>;
+export type UrgencyStatsBreakdown = StatsBreakdown<Urgency>;
+export type StatusStatsBreakdown = StatsBreakdown<Status>;
+
 export interface GetStatsResult {
-  totalComplaints: number;
-  byCategory: Record<Category, number>;
-  byUrgency: Record<Urgency, number>;
-  byStatus: Record<Status, number>;
-  overdue: number;
-  staffInvolved: number;
+  totalComplaints: ProtectedCount;
+  byCategory: CategoryStatsBreakdown;
+  byUrgency: UrgencyStatsBreakdown;
+  byStatus: StatusStatsBreakdown;
+  overdue: ProtectedCount;
+  staffInvolved: ProtectedCount;
+  byUniversity?: Record<string, number>;
 }
 
 export const getStatsInputSchema = z
@@ -448,33 +458,40 @@ export const getStatsInputSchema = z
   })
   .strict() satisfies z.ZodType<GetStatsInput>;
 
+const protectedCountSchema = z.number().int().nonnegative().nullable();
+
 export const getStatsResultSchema = z
   .object({
-    totalComplaints: z.number().int().nonnegative(),
+    totalComplaints: protectedCountSchema,
     byCategory: z
       .object({
-        verbal: z.number().int().nonnegative(),
-        physical: z.number().int().nonnegative(),
-        sexual: z.number().int().nonnegative(),
-        cyber: z.number().int().nonnegative(),
-        financial: z.number().int().nonnegative(),
-        other: z.number().int().nonnegative(),
+        verbal: protectedCountSchema,
+        physical: protectedCountSchema,
+        sexual: protectedCountSchema,
+        cyber: protectedCountSchema,
+        financial: protectedCountSchema,
+        other: protectedCountSchema,
       })
       .strict(),
     byUrgency: z
       .object({
-        normal: z.number().int().nonnegative(),
-        urgent: z.number().int().nonnegative(),
+        normal: protectedCountSchema,
+        urgent: protectedCountSchema,
+        other: protectedCountSchema,
       })
       .strict(),
     byStatus: z
       .object({
-        not_started: z.number().int().nonnegative(),
-        pending_investigation: z.number().int().nonnegative(),
-        finished: z.number().int().nonnegative(),
+        not_started: protectedCountSchema,
+        pending_investigation: protectedCountSchema,
+        finished: protectedCountSchema,
+        other: protectedCountSchema,
       })
       .strict(),
-    overdue: z.number().int().nonnegative(),
-    staffInvolved: z.number().int().nonnegative(),
+    overdue: protectedCountSchema,
+    staffInvolved: protectedCountSchema,
+    byUniversity: z
+      .record(z.string().min(1), z.number().int().nonnegative())
+      .optional(),
   })
   .strict() satisfies z.ZodType<GetStatsResult>;

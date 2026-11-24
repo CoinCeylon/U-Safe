@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import {
+  bucketCount,
   computeZeroNodes,
   MERKLE_TREE_DEPTH,
   MerkleTree,
@@ -11,6 +12,7 @@ import {
 import {
   CATEGORIES,
   DEMO_SLA_SECONDS,
+  MIN_GROUP_SIZE,
   NORMAL_DEADLINE_SECONDS,
   STATUSES,
   URGENT_DEADLINE_SECONDS,
@@ -44,6 +46,7 @@ import type {
   OwnerRole,
   RedactedComplaintRecord,
   Status,
+  StatsBreakdown,
   SupportComplaintInput,
   SupportComplaintResult,
   Urgency,
@@ -657,11 +660,12 @@ export class MockLedger implements LedgerAdapter {
     );
     const rows = this.db
       .prepare(
-        `SELECT category, urgency, status, deadline_at, staff_involved
+        `SELECT university_id, category, urgency, status, deadline_at, staff_involved
          FROM ml_complaints
          ${universityId === null ? '' : 'WHERE university_id = ?'}`,
       )
       .all(...(universityId === null ? [] : [universityId])) as Array<{
+      university_id: string;
       category: string;
       urgency: string;
       status: string;
@@ -678,6 +682,7 @@ export class MockLedger implements LedgerAdapter {
     const byStatus = Object.fromEntries(
       STATUSES.map((status) => [status, 0]),
     ) as Record<Status, number>;
+    const byUniversity: Record<string, number> = {};
     const now = new Date().toISOString();
     let overdue = 0;
     let staffInvolved = 0;
@@ -686,6 +691,8 @@ export class MockLedger implements LedgerAdapter {
       byCategory[row.category as Category] += 1;
       byUrgency[row.urgency as Urgency] += 1;
       byStatus[row.status as Status] += 1;
+      byUniversity[row.university_id] =
+        (byUniversity[row.university_id] ?? 0) + 1;
       if (row.deadline_at <= now && row.status !== 'finished') {
         overdue += 1;
       }
@@ -694,13 +701,19 @@ export class MockLedger implements LedgerAdapter {
       }
     }
 
+    const isUgc = input.viewerRole === 'ugc';
     return Promise.resolve({
-      totalComplaints: rows.length,
-      byCategory,
-      byUrgency,
-      byStatus,
-      overdue,
-      staffInvolved,
+      totalComplaints: isUgc
+        ? rows.length
+        : bucketCount(rows.length, MIN_GROUP_SIZE),
+      byCategory: this.protectBreakdown(byCategory),
+      byUrgency: this.protectBreakdown(byUrgency),
+      byStatus: this.protectBreakdown(byStatus),
+      overdue: isUgc ? overdue : bucketCount(overdue, MIN_GROUP_SIZE),
+      staffInvolved: isUgc
+        ? staffInvolved
+        : bucketCount(staffInvolved, MIN_GROUP_SIZE),
+      ...(isUgc ? { byUniversity } : {}),
     });
   }
 
@@ -711,6 +724,28 @@ export class MockLedger implements LedgerAdapter {
   // ------------------------------------------------------------------
   // Private helpers
   // ------------------------------------------------------------------
+
+  private protectBreakdown<K extends string>(
+    counts: Record<K, number>,
+  ): StatsBreakdown<K> {
+    const protectedCounts: Record<string, number | null> = {};
+    let other = 0;
+
+    for (const [key, value] of Object.entries(counts) as Array<[K, number]>) {
+      if (key === 'other') {
+        other += value;
+        continue;
+      }
+      const protectedCount = bucketCount(value, MIN_GROUP_SIZE);
+      protectedCounts[key] = protectedCount;
+      if (protectedCount === null) {
+        other += value;
+      }
+    }
+
+    protectedCounts.other = bucketCount(other, MIN_GROUP_SIZE);
+    return protectedCounts as StatsBreakdown<K>;
+  }
 
   private resolveViewerUniversity(
     viewerRole: ComplaintViewerRole,

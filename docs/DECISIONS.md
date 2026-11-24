@@ -52,3 +52,9 @@ Record package names, versions and adaptations here.
   for university viewers on staff-involved cases because it contains only status,
   timestamps, actor roles and note hashes allowed by specification section 7.3; the
   detailed complaint record is what gets redacted.
+- M046 uses `null` as the API representation of `bucketCount`'s protected result. Portals
+  will render that null as the phrase "fewer than 5". Small groups in every category,
+  urgency and status breakdown are merged into an `other` bucket; if that merged bucket is
+  itself below `MIN_GROUP_SIZE`, it is also null. Student and university scalar totals,
+  overdue and staff-involved counts are protected the same way, while UGC viewers receive
+  exact global totals and an exact `byUniversity` map plus bucketed breakdowns.
