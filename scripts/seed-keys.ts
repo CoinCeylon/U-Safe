@@ -223,7 +223,9 @@ export const seedDemoKeys = async (
 const main = async (): Promise<void> => {
   const communityDeliverySecret = process.env.COMMUNITY_DELIVERY_SECRET ?? '';
   if (communityDeliverySecret.length === 0) {
-    throw new Error('COMMUNITY_DELIVERY_SECRET is required');
+    throw new Error(
+      'COMMUNITY_DELIVERY_SECRET is required. Example:\n  COMMUNITY_DELIVERY_SECRET=change-me-dev-delivery-secret npm run seed:keys',
+    );
   }
 
   const baseDir = process.env.INIT_CWD ?? process.cwd();

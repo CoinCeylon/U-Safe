@@ -64,4 +64,8 @@ Record package names, versions and adaptations here.
   enrollment and complaint routes. The reopen route is present but returns 501 until the
   reopen behaviour is implemented in M079. `npm run demo:cli` drives `MockLedger` directly
   against `DATABASE_PATH`, prints only non-sensitive demo output, and supports `--no-status`
-  so the escalation job can demonstrate a deadline breach.
+  so the escalation job can demonstrate a deadline breach. `try:forge` is HTTP-only and
+  expects 401; `try:duplicate` keeps its student secret in memory, stores only the commitment,
+  files through HTTP, reuses one support proof, expects the second request to fail, and
+  confirms the final count stays at 1. The demo CLI uses the leaf indexes returned by
+  `enrollCommitment`, so it also works when a university already has earlier enrollments.

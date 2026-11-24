@@ -28,15 +28,18 @@ export const runDemoFlow = async (
 ): Promise<ComplaintRecord> => {
   const ledger = new MockLedger(db);
   const secrets: Uint8Array[] = [];
-  const commitments: string[] = [];
+  const leafIndexes: number[] = [];
 
   for (let index = 0; index < STUDENT_COUNT; index += 1) {
     const secret = randomBytes(32);
     const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
     const commitment = Buffer.from(commitmentBytes).toString('hex');
-    await ledger.enrollCommitment({ universityId, commitment });
+    const receipt = await ledger.enrollCommitment({
+      universityId,
+      commitment,
+    });
     secrets.push(secret);
-    commitments.push(commitment);
+    leafIndexes.push(receipt.leafIndex);
   }
 
   const leaves = await ledger.getLeaves({ universityId });
@@ -44,7 +47,7 @@ export const runDemoFlow = async (
   const filingProof = await proveMembershipMock(
     secrets[0]!,
     leaves.commitments,
-    0,
+    leafIndexes[0]!,
     `file|${yearMonth}|0`,
   );
   filingProof.universityId = universityId;
@@ -66,7 +69,7 @@ export const runDemoFlow = async (
     const supportProof = await proveMembershipMock(
       secrets[index]!,
       leaves.commitments,
-      index,
+      leafIndexes[index]!,
       `support|${filed.id}`,
     );
     supportProof.universityId = universityId;

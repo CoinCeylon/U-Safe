@@ -58,4 +58,21 @@ describe('runDemoFlow', () => {
     expect(record.supportCount).toBe(4);
     expect(record.status).toBe('not_started');
   });
+
+  it('works when the university already has enrolled leaves', async () => {
+    const first = await runDemoFlow(db, 'demo-university');
+    const second = await runDemoFlow(db, 'demo-university');
+
+    expect(first.supportCount).toBe(4);
+    expect(first.status).toBe('finished');
+    expect(second.supportCount).toBe(4);
+    expect(second.status).toBe('finished');
+
+    const enrollments = db
+      .prepare(
+        'SELECT COUNT(*) AS count FROM ml_leaves WHERE university_id = ?',
+      )
+      .get('demo-university') as { count: number };
+    expect(enrollments.count).toBe(10);
+  });
 });
