@@ -22,6 +22,8 @@ import type {
   GetLeavesResult,
   GetRootsInput,
   GetRootsResult,
+  MarkEscalatedInput,
+  MarkEscalatedResult,
   MembershipProof,
   SupportComplaintInput,
   SupportComplaintResult,
@@ -451,10 +453,54 @@ export class MockLedger implements LedgerAdapter {
   }
 
   // ------------------------------------------------------------------
-  // Not yet implemented (M042-M047)
+  // Not yet implemented (M043-M047)
   // ------------------------------------------------------------------
-  markEscalated(): Promise<import('@usafe/shared').MarkEscalatedResult> {
-    throw new Error('markEscalated is not yet implemented (M042)');
+  async markEscalated(
+    input: MarkEscalatedInput,
+  ): Promise<MarkEscalatedResult> {
+    await Promise.resolve();
+    // 1. Look up the complaint.
+    const complaint = this.db
+      .prepare('SELECT * FROM ml_complaints WHERE id = ?')
+      .get(input.complaintId) as Record<string, unknown> | undefined;
+    if (complaint === undefined) {
+      throw new Error('complaint not found');
+    }
+
+    const status = String(complaint.status);
+    const alreadyEscalated = Number(complaint.escalated) === 1;
+    const deadlineAt = String(complaint.deadline_at);
+    const now = new Date().toISOString();
+
+    // 2. Already escalated: idempotent, no-op.
+    if (alreadyEscalated) {
+      return { complaintId: input.complaintId, escalated: true };
+    }
+
+    // 3. Only escalate complaints that are still not_started and past their deadline.
+    if (status !== 'not_started' || deadlineAt > now) {
+      return { complaintId: input.complaintId, escalated: false };
+    }
+
+    // 4. Set escalated=true, append a history row (actor 'system'), publish event.
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE ml_complaints SET escalated = 1, last_updated_at = ? WHERE id = ?`,
+        )
+        .run(now, input.complaintId);
+      this.db
+        .prepare(
+          `INSERT INTO ml_history (complaint_id, status, at, actor_role, note_hash)
+           VALUES (?, ?, ?, 'system', NULL)`,
+        )
+        .run(input.complaintId, status, now);
+    });
+    transaction();
+
+    this.publishEvent({ type: 'complaint.escalated', id: input.complaintId });
+
+    return { complaintId: input.complaintId, escalated: true };
   }
   reopenComplaint(): Promise<import('@usafe/shared').ReopenComplaintResult> {
     throw new Error('reopenComplaint is not yet implemented (M043)');

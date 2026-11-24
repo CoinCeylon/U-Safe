@@ -726,4 +726,111 @@ describe('MockLedger (M037)', () => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('markEscalated escalates overdue complaints, is idempotent, and respects deadlines', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db, {
+      publish: (event) => {
+        publishedEvents.push(event);
+      },
+    });
+    const publishedEvents: Array<{ type: string; id: string }> = [];
+
+    // Enroll a student.
+    const secret = randomBytes(32);
+    const { hash, DOMAIN_TAG_COMMITMENT } = await import('@usafe/crypto');
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    // File a complaint.
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|0`,
+    );
+    proof.universityId = 'uni-1';
+
+    const result = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof,
+    });
+    const complaintId = result.id;
+
+    // Before deadline: markEscalated returns false, no change.
+    const before = await ledger.markEscalated({ complaintId });
+    expect(before.escalated).toBe(false);
+
+    const rowBefore = db
+      .prepare(`SELECT escalated FROM ml_complaints WHERE id = ?`)
+      .get(complaintId) as { escalated: number };
+    expect(rowBefore.escalated).toBe(0);
+
+    // Move the deadline into the past.
+    const pastDate = new Date(Date.now() - 1000 * 60 * 60).toISOString();
+    db.prepare(`UPDATE ml_complaints SET deadline_at = ? WHERE id = ?`).run(
+      pastDate,
+      complaintId,
+    );
+
+    // After deadline: markEscalated returns true, escalates.
+    publishedEvents.length = 0;
+    const after = await ledger.markEscalated({ complaintId });
+    expect(after.escalated).toBe(true);
+
+    const rowAfter = db
+      .prepare(`SELECT escalated FROM ml_complaints WHERE id = ?`)
+      .get(complaintId) as { escalated: number };
+    expect(rowAfter.escalated).toBe(1);
+
+    // History row appended with actor 'system'.
+    const history = db
+      .prepare(
+        `SELECT actor_role FROM ml_history WHERE complaint_id = ? AND actor_role = 'system'`,
+      )
+      .all(complaintId) as Array<{ actor_role: string }>;
+    expect(history).toHaveLength(1);
+
+    // Event published.
+    expect(publishedEvents).toHaveLength(1);
+    expect(publishedEvents[0]!.type).toBe('complaint.escalated');
+    expect(publishedEvents[0]!.id).toBe(complaintId);
+
+    // Idempotent: calling again returns true, no duplicate history.
+    publishedEvents.length = 0;
+    const again = await ledger.markEscalated({ complaintId });
+    expect(again.escalated).toBe(true);
+    const historyAfter = db
+      .prepare(
+        `SELECT actor_role FROM ml_history WHERE complaint_id = ? AND actor_role = 'system'`,
+      )
+      .all(complaintId) as Array<{ actor_role: string }>;
+    expect(historyAfter).toHaveLength(1);
+    expect(publishedEvents).toHaveLength(0);
+
+    // Non-existent complaint throws.
+    await expect(
+      ledger.markEscalated({ complaintId: 'no-such-complaint' }),
+    ).rejects.toThrow('complaint not found');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

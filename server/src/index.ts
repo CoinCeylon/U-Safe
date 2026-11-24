@@ -1,15 +1,19 @@
 import { loadConfig } from './config.js';
 import { buildApp } from './app.js';
 import { openDatabase } from './db/index.js';
+import { startEscalationJob, stopEscalationJob } from './services/escalation.js';
 
 const main = async (): Promise<void> => {
   const config = loadConfig();
   const db = openDatabase(config.DATABASE_PATH, './migrations');
   const app = await buildApp(config, db);
 
+  const escalationHandle = startEscalationJob(db);
+
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
     try {
+      stopEscalationJob(escalationHandle);
       await app.close();
       db.close();
       process.exit(0);
