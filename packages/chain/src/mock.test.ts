@@ -467,4 +467,263 @@ describe('MockLedger (M037)', () => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('updateStatus enforces forward-only transitions, outcome requirement, and ownership', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    // Enroll a student.
+    const secret = randomBytes(32);
+    const { hash, DOMAIN_TAG_COMMITMENT } = await import('@usafe/crypto');
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    // File a complaint (university-owned).
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|0`,
+    );
+    proof.universityId = 'uni-1';
+
+    const result = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof,
+    });
+    const complaintId = result.id;
+
+    // Valid: not_started -> pending_investigation
+    const r1 = await ledger.updateStatus({
+      complaintId,
+      newStatus: 'pending_investigation',
+      outcomeHash: null,
+      ownerRole: 'university',
+    });
+    expect(r1.status).toBe('pending_investigation');
+
+    // Skipping a state (pending -> finished is valid, but not_started -> finished was already passed)
+    // Test: try to go back to not_started -> rejected
+    await expect(
+      ledger.updateStatus({
+        complaintId,
+        newStatus: 'not_started',
+        outcomeHash: null,
+        ownerRole: 'university',
+      }),
+    ).rejects.toThrow('status can only move forward');
+
+    // Valid: pending -> finished with outcome
+    const r2 = await ledger.updateStatus({
+      complaintId,
+      newStatus: 'finished',
+      outcomeHash: 'outcome-hash-123',
+      ownerRole: 'university',
+    });
+    expect(r2.status).toBe('finished');
+
+    // Verify history rows were appended (not_started + pending + finished = 3)
+    const history = db
+      .prepare(
+        `SELECT status, actor_role FROM ml_history WHERE complaint_id = ? ORDER BY at ASC`,
+      )
+      .all(complaintId) as Array<{ status: string; actor_role: string }>;
+    expect(history).toHaveLength(3);
+    expect(history[0]!.status).toBe('not_started');
+    expect(history[1]!.status).toBe('pending_investigation');
+    expect(history[2]!.status).toBe('finished');
+    expect(history[2]!.actor_role).toBe('university');
+
+    // Verify outcome_hash stored
+    const row = db
+      .prepare(`SELECT outcome_hash FROM ml_complaints WHERE id = ?`)
+      .get(complaintId) as { outcome_hash: string | null };
+    expect(row.outcome_hash).toBe('outcome-hash-123');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('updateStatus rejects skipping states and finishing without outcome', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const secret = randomBytes(32);
+    const { hash, DOMAIN_TAG_COMMITMENT } = await import('@usafe/crypto');
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|0`,
+    );
+    proof.universityId = 'uni-1';
+
+    const result = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof,
+    });
+    const complaintId = result.id;
+
+    // Skipping: not_started -> finished directly -> rejected
+    await expect(
+      ledger.updateStatus({
+        complaintId,
+        newStatus: 'finished',
+        outcomeHash: 'some-outcome',
+        ownerRole: 'university',
+      }),
+    ).rejects.toThrow('status can only move forward');
+
+    // Moving to pending first
+    await ledger.updateStatus({
+      complaintId,
+      newStatus: 'pending_investigation',
+      outcomeHash: null,
+      ownerRole: 'university',
+    });
+
+    // Finishing without outcome -> rejected
+    await expect(
+      ledger.updateStatus({
+        complaintId,
+        newStatus: 'finished',
+        outcomeHash: null,
+        ownerRole: 'university',
+      }),
+    ).rejects.toThrow('finished requires a non-empty outcomeHash');
+
+    // Finishing with empty string outcome -> rejected
+    await expect(
+      ledger.updateStatus({
+        complaintId,
+        newStatus: 'finished',
+        outcomeHash: '',
+        ownerRole: 'university',
+      }),
+    ).rejects.toThrow('finished requires a non-empty outcomeHash');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('updateStatus rejects wrong owner role (university cannot touch UGC-owned)', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const secret = randomBytes(32);
+    const { hash, DOMAIN_TAG_COMMITMENT } = await import('@usafe/crypto');
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    // File a staff-involved complaint (ownerRole = 'ugc').
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|0`,
+    );
+    proof.universityId = 'uni-1';
+
+    const result = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: true,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof,
+    });
+    const complaintId = result.id;
+
+    // University staff trying to update a UGC-owned complaint -> rejected.
+    await expect(
+      ledger.updateStatus({
+        complaintId,
+        newStatus: 'pending_investigation',
+        outcomeHash: null,
+        ownerRole: 'university',
+      }),
+    ).rejects.toThrow('insufficient role to update this complaint');
+
+    // UGC staff can update it.
+    const r = await ledger.updateStatus({
+      complaintId,
+      newStatus: 'pending_investigation',
+      outcomeHash: null,
+      ownerRole: 'ugc',
+    });
+    expect(r.status).toBe('pending_investigation');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('updateStatus rejects non-existent complaint', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    await expect(
+      ledger.updateStatus({
+        complaintId: 'no-such-complaint',
+        newStatus: 'pending_investigation',
+        outcomeHash: null,
+        ownerRole: 'university',
+      }),
+    ).rejects.toThrow('complaint not found');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

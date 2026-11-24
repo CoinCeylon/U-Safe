@@ -25,6 +25,8 @@ import type {
   MembershipProof,
   SupportComplaintInput,
   SupportComplaintResult,
+  UpdateStatusInput,
+  UpdateStatusResult,
 } from '@usafe/shared';
 import { LedgerAdapter } from './ledger.js';
 
@@ -378,12 +380,79 @@ export class MockLedger implements LedgerAdapter {
   }
 
   // ------------------------------------------------------------------
-  // Not yet implemented (M041-M047)
+  // Update status (M041)
   // ------------------------------------------------------------------
 
-  updateStatus(): Promise<import('@usafe/shared').UpdateStatusResult> {
-    throw new Error('updateStatus is not yet implemented (M041)');
+  async updateStatus(
+    input: UpdateStatusInput,
+  ): Promise<UpdateStatusResult> {
+    await Promise.resolve();
+    // 1. Look up the complaint.
+    const complaint = this.db
+      .prepare('SELECT * FROM ml_complaints WHERE id = ?')
+      .get(input.complaintId) as Record<string, unknown> | undefined;
+    if (complaint === undefined) {
+      throw new Error('complaint not found');
+    }
+
+    // 2. Only the owner role may change the status. The caller's role must
+    //    match the complaint's stored owner_role, so a university cannot
+    //    touch a UGC-owned complaint and vice versa.
+    if (input.ownerRole !== complaint.owner_role) {
+      throw new Error('insufficient role to update this complaint');
+    }
+
+    // 3. Transitions only go forward.
+    const order: Record<string, number> = {
+      not_started: 0,
+      pending_investigation: 1,
+      finished: 2,
+    };
+    const current = String(complaint.status);
+    const next = input.newStatus;
+    if (!(current in order) || !(next in order)) {
+      throw new Error('invalid status');
+    }
+    if (order[next]! !== order[current]! + 1) {
+      throw new Error('status can only move forward');
+    }
+
+    // 4. Finished requires a non-empty outcomeHash.
+    if (next === 'finished' && (!input.outcomeHash || input.outcomeHash === '')) {
+      throw new Error('finished requires a non-empty outcomeHash');
+    }
+
+    // 5. Store the status change and append a history row. When finishing,
+    //    the outcome hash is recorded (the outcome text itself is stored
+    //    off-chain as a sealed blob by the portal).
+    const now = new Date().toISOString();
+    const outcomeHash = next === 'finished' ? input.outcomeHash : null;
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE ml_complaints
+           SET status = ?, outcome_hash = ?, last_updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(next, outcomeHash, now, input.complaintId);
+      this.db
+        .prepare(
+          `INSERT INTO ml_history (complaint_id, status, at, actor_role, note_hash)
+           VALUES (?, ?, ?, ?, NULL)`,
+        )
+        .run(input.complaintId, next, now, input.ownerRole);
+    });
+    transaction();
+
+    // 6. Publish an event.
+    this.publishEvent({ type: 'complaint.status', id: input.complaintId });
+
+    return { complaintId: input.complaintId, status: next };
   }
+
+  // ------------------------------------------------------------------
+  // Not yet implemented (M042-M047)
+  // ------------------------------------------------------------------
   markEscalated(): Promise<import('@usafe/shared').MarkEscalatedResult> {
     throw new Error('markEscalated is not yet implemented (M042)');
   }

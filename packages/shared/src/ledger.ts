@@ -198,6 +198,7 @@ export interface UpdateStatusInput {
   complaintId: string;
   newStatus: Status;
   outcomeHash: string | null;
+  ownerRole: 'university' | 'ugc';
 }
 
 export interface UpdateStatusResult {
@@ -210,6 +211,7 @@ export const updateStatusInputSchema = z
     complaintId: z.string().min(1),
     newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
     outcomeHash: z.string().nullable(),
+    ownerRole: z.enum(['university', 'ugc']),
   })
   .strict() satisfies z.ZodType<UpdateStatusInput>;
 
