@@ -1,16 +1,15 @@
-// Onboarding wizard for the student portal.
+// Onboarding wizard for the student portal (M049, M050, M051, M052).
 //
 // Four steps:
 //   1. Choose university and enter university email (with privacy explanation).
-//   2. Enter the 6-digit OTP code received by email.
+//   2. Request and verify a 6-digit OTP code -> enrolment ticket.
 //   3. Connect wallet (Lace via CIP-30, or a fake dev wallet).
-//   4. Finish — enrolment is completed in later milestones.
+//   4. Unlock the student secret, compute the commitment, call
+//      POST /api/enroll and persist the result in SecureStore.
 //
-// Non-sensitive progress (current step, university, email) is kept in memory
-// and persisted to sessionStorage so the wizard resumes after a refresh.
-// Sensitive values (OTP code, wallet signature, student secret) are never
-// persisted here. Once the student secret is available (M051/M052), the
-// persisted progress moves into SecureStore (encrypted with the secret).
+// Non-sensitive progress (step, university, email) is persisted to
+// sessionStorage so the wizard resumes after a refresh. Sensitive values
+// (OTP code, ticket, wallet signature, student secret) are memory-only.
 //
 // See docs/DECISIONS.md for the persistence choice.
 
@@ -18,6 +17,24 @@ import { button } from '../ui/button';
 import { input } from '../ui/input';
 import { select } from '../ui/select';
 import { toast } from '../ui/toast';
+import {
+  connectWallet,
+  isConnected,
+  getAddress,
+  isFakeWalletMode,
+} from './wallet';
+import {
+  unlockStudent,
+  getCommitment,
+  clearStudentSecret,
+} from './unlock';
+import {
+  requestOtp,
+  verifyOtp,
+  enroll,
+  saveEnrollment,
+  type OtpTicket,
+} from './enroll';
 
 export type Step = 1 | 2 | 3 | 4;
 
@@ -27,7 +44,12 @@ interface WizardState {
   universityName: string;
   email: string;
   code: string;
+  ticket: string | null;
   walletConnected: boolean;
+  otpRequested: boolean;
+  otpError: string | null;
+  enrollStatus: 'idle' | 'deriving' | 'committing' | 'enrolling' | 'saving' | 'done' | 'error';
+  enrollError: string | null;
 }
 
 const STORAGE_KEY = 'usafe-wizard-state';
@@ -38,7 +60,12 @@ const DEFAULT_STATE: WizardState = {
   universityName: '',
   email: '',
   code: '',
+  ticket: null,
   walletConnected: false,
+  otpRequested: false,
+  otpError: null,
+  enrollStatus: 'idle',
+  enrollError: null,
 };
 
 function loadState(): WizardState {
@@ -56,7 +83,6 @@ function loadState(): WizardState {
       email: parsed.email ?? '',
     };
   } catch {
-    // sessionStorage may be unavailable (e.g. private mode); start fresh.
     return { ...DEFAULT_STATE };
   }
 }
@@ -128,7 +154,6 @@ export async function fetchUniversities(): Promise<UniversityOption[]> {
     }
     return universitiesCache;
   } catch {
-    // Fallback demo list so the wizard is usable without a running server.
     universitiesCache = [
       { value: 'demo-university-1', label: 'Demo University' },
       { value: 'demo-university-2', label: 'Hillside College' },
@@ -139,7 +164,7 @@ export async function fetchUniversities(): Promise<UniversityOption[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Step renderers
+// Step 1: university + email + privacy explanation
 // ---------------------------------------------------------------------------
 
 function privacyNotice(): HTMLDivElement {
@@ -227,10 +252,8 @@ function renderStep1(
   error.textContent = 'Please select a university and enter a valid email address.';
   section.append(error);
 
-  // Reveal the error only after the user has interacted with the fields.
   const validate = (): boolean => {
-    const ok =
-      state.universityId.length > 0 && isValidEmail(state.email);
+    const ok = state.universityId.length > 0 && isValidEmail(state.email);
     error.hidden = ok;
     return ok;
   };
@@ -240,6 +263,10 @@ function renderStep1(
 
   return section;
 }
+
+// ---------------------------------------------------------------------------
+// Step 2: OTP request + verify -> ticket
+// ---------------------------------------------------------------------------
 
 function renderStep2(
   state: WizardState,
@@ -256,8 +283,15 @@ function renderStep2(
   const intro = document.createElement('p');
   intro.className = 'text-sm text-slate-600 leading-relaxed';
   intro.textContent =
-    'Enter the 6-digit code sent to your email. The code expires after 10 minutes.';
+    'A 6-digit code has been sent to your email. Enter it to receive your enrolment ticket. The code expires after 10 minutes.';
   section.append(intro);
+
+  if (state.otpError !== null) {
+    const err = document.createElement('p');
+    err.className = 'text-xs text-danger';
+    err.textContent = state.otpError;
+    section.append(err);
+  }
 
   const codeInput = input({
     id: 'wizard-code',
@@ -265,43 +299,71 @@ function renderStep2(
     type: 'text',
     placeholder: '000000',
     value: state.code,
-    disabled: state.step !== 2,
   });
   const codeControl = codeInput.querySelector('input')!;
   codeControl.inputMode = 'numeric';
   codeControl.addEventListener('input', () => {
-    // Keep only digits, max 6.
     const value = codeControl.value.replace(/\D/g, '').slice(0, 6);
     codeControl.value = value;
     onChange({ code: value });
   });
   section.append(codeInput);
 
-  const error = document.createElement('p');
-  error.className = 'text-xs text-danger';
-  error.hidden = true;
-  error.textContent = 'Please enter a valid 6-digit code.';
-  section.append(error);
+  const buttonRow = document.createElement('div');
+  buttonRow.className = 'flex flex-col sm:flex-row gap-3';
 
-  const validate = (): boolean => {
-    const ok = isValidCode(state.code);
-    error.hidden = ok;
-    return ok;
+  const handleVerify = async (): Promise<void> => {
+    onChange({ otpError: null, enrollStatus: 'idle' });
+    try {
+      const ticket: OtpTicket = await verifyOtp(state.email, state.code);
+      onChange({ ticket: ticket.ticket });
+      toast('Enrolment ticket received.', 'success');
+    } catch (error) {
+      onChange({
+        otpError:
+          error instanceof Error ? error.message : 'Verification failed.',
+      });
+    }
   };
-  codeControl.addEventListener('blur', validate);
-  codeControl.addEventListener('input', validate);
+  const verify = button({
+    label: 'Verify code',
+    variant: 'primary',
+    disabled: !isValidCode(state.code) || state.ticket !== null,
+    onClick: () => {
+      void handleVerify();
+    },
+  });
+  buttonRow.append(verify);
 
+  const handleResend = async (): Promise<void> => {
+    onChange({ otpError: null, ticket: null, otpRequested: false });
+    try {
+      await requestOtp(state.email);
+      onChange({ otpRequested: true });
+      toast('A new code has been sent.', 'info');
+    } catch (error) {
+      onChange({
+        otpError:
+          error instanceof Error ? error.message : 'Could not resend code.',
+      });
+    }
+  };
   const resend = button({
     label: 'Resend code',
     variant: 'secondary',
     onClick: () => {
-      toast('A new code has been sent to your email.', 'info');
+      void handleResend();
     },
   });
-  section.append(resend);
+  buttonRow.append(resend);
 
+  section.append(buttonRow);
   return section;
 }
+
+// ---------------------------------------------------------------------------
+// Step 3: connect wallet
+// ---------------------------------------------------------------------------
 
 function renderStep3(
   state: WizardState,
@@ -321,52 +383,213 @@ function renderStep3(
     'Connect your Lace wallet to sign the enrolment message. Your wallet address is never stored with your complaint.';
   section.append(intro);
 
+  if (isFakeWalletMode()) {
+    const warn = document.createElement('div');
+    warn.className =
+      'rounded-md border border-danger bg-danger-light text-danger p-3 text-xs font-medium';
+    warn.textContent =
+      'DEVELOPMENT ONLY: fake wallet active. Do not use for real enrolments.';
+    section.append(warn);
+  }
+
+  const connected = state.walletConnected;
+  const address = getAddress();
+
+  const handleConnect = async (): Promise<void> => {
+    try {
+      await connectWallet();
+      onChange({
+        walletConnected: isConnected(),
+      });
+      if (isConnected()) {
+        toast('Wallet connected.', 'success');
+      }
+    } catch (error) {
+      onChange({ walletConnected: false });
+      toast(
+        error instanceof Error ? error.message : 'Could not connect wallet.',
+        'danger',
+      );
+    }
+  };
   const connect = button({
-    label: 'Connect wallet (Lace)',
-    variant: 'primary',
+    label: connected ? 'Wallet connected' : 'Connect wallet (Lace)',
+    variant: connected ? 'primary' : 'primary',
+    disabled: connected,
     onClick: () => {
-      onChange({ walletConnected: true });
-      toast('Wallet connected.', 'success');
+      void handleConnect();
     },
   });
   section.append(connect);
 
-  const fake = button({
-    label: 'Use fake wallet (development only)',
-    variant: 'secondary',
-    onClick: () => {
-      onChange({ walletConnected: true });
-      toast('Fake wallet connected.', 'warning');
-    },
-  });
-  fake.classList.add('mt-2');
-  section.append(fake);
+  if (connected && address !== null) {
+    const addr = document.createElement('p');
+    addr.className = 'text-xs text-slate-500 break-all';
+    addr.textContent = 'Address: ' + address;
+    section.append(addr);
+  }
 
   const notice = document.createElement('p');
   notice.className = 'text-xs text-slate-500 mt-2';
   notice.textContent =
-    'Real Lace integration is wired in the next milestone. The wizard advances once a wallet is connected.';
+    'Real Lace integration triggers a wallet signature popup. The wizard advances once a wallet is connected.';
   section.append(notice);
 
   return section;
 }
 
-function renderStep4(): HTMLElement {
+// ---------------------------------------------------------------------------
+// Step 4: unlock secret, compute commitment, enrol, persist
+// ---------------------------------------------------------------------------
+
+const STATUS_LABELS: Record<WizardState['enrollStatus'], string> = {
+  deriving: 'Deriving your student secret…',
+  committing: 'Computing your commitment…',
+  enrolling: 'Sending enrolment to the server…',
+  saving: 'Saving your enrolment receipt…',
+  done: 'Enrolment complete.',
+  error: 'Enrolment failed.',
+  idle: 'Ready to enrol.',
+};
+
+function renderStep4(
+  state: WizardState,
+  onChange: (next: Partial<WizardState>) => void,
+): HTMLElement {
   const section = document.createElement('section');
-  section.className = 'flex flex-col gap-4 items-center text-center';
+  section.className = 'flex flex-col gap-4';
 
   const heading = document.createElement('h2');
   heading.className = 'text-lg font-semibold text-slate-900';
-  heading.textContent = 'Step 4 of 4 — Ready';
+  heading.textContent = 'Step 4 of 4 — Complete enrolment';
   section.append(heading);
 
-  const text = document.createElement('p');
-  text.className = 'text-sm text-slate-600 leading-relaxed max-w-xs';
-  text.textContent =
-    'Your enrolment will be completed in the next step. You will then be able to file and support complaints.';
-  section.append(text);
+  const intro = document.createElement('p');
+  intro.className = 'text-sm text-slate-600 leading-relaxed';
+  intro.textContent =
+    'Unlock your student secret and finalise enrolment. Your commitment (a public hash) is sent to the server; your secret stays in memory only.';
+  section.append(intro);
+
+  if (state.enrollError !== null) {
+    const err = document.createElement('p');
+    err.className = 'text-xs text-danger';
+    err.textContent = state.enrollError;
+    section.append(err);
+  }
+
+  const status = document.createElement('p');
+  status.className = 'text-sm text-slate-600';
+  status.textContent = STATUS_LABELS[state.enrollStatus];
+  section.append(status);
+
+  const buttonRow = document.createElement('div');
+  buttonRow.className = 'flex flex-col sm:flex-row gap-3';
+
+  const canEnroll =
+    state.ticket !== null &&
+    state.walletConnected &&
+    state.enrollStatus === 'idle';
+
+  const finish = button({
+    label: 'Finish enrolment',
+    variant: 'primary',
+    disabled: !canEnroll,
+    onClick: () => {
+      onChange({ enrollError: null });
+      void runEnrollment(state, onChange);
+    },
+  });
+  buttonRow.append(finish);
+
+  const logout = button({
+    label: 'Start over',
+    variant: 'secondary',
+    onClick: () => {
+      clearStudentSecret();
+      clearPersisted();
+      onChange({
+        step: 1,
+        code: '',
+        ticket: null,
+        walletConnected: false,
+        otpRequested: false,
+        otpError: null,
+        enrollStatus: 'idle',
+        enrollError: null,
+      });
+    },
+  });
+  buttonRow.append(logout);
+
+  section.append(buttonRow);
+
+  if (state.enrollStatus === 'done') {
+    const success = document.createElement('div');
+    success.className =
+      'rounded-lg border border-success bg-success-light p-4 text-success';
+    const ok = document.createElement('p');
+    ok.className = 'font-semibold';
+    ok.textContent = 'Enrolment complete.';
+    const next = document.createElement('p');
+    next.className = 'text-sm';
+    next.textContent =
+      'Your enrolment receipt is saved. You can now open the feed and file or support complaints.';
+    success.append(ok, next);
+    section.append(success);
+  }
 
   return section;
+}
+
+async function runEnrollment(
+  state: WizardState,
+  onChange: (next: Partial<WizardState>) => void,
+): Promise<void> {
+  try {
+    // 1. Derive the student secret from the wallet signature.
+    onChange({ enrollStatus: 'deriving' });
+    await unlockStudent(state.universityId);
+
+    // 2. Compute the public commitment (Merkle leaf value).
+    onChange({ enrollStatus: 'committing' });
+    const commitment = await getCommitment();
+    if (commitment === null) {
+      throw new Error('Could not compute commitment');
+    }
+    const commitmentHex = Array.from(commitment, (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('');
+
+    // 3. Enrol with the server.
+    onChange({ enrollStatus: 'enrolling' });
+    const result = await enroll(state.ticket!, commitmentHex);
+
+    // 4. Persist the enrolment receipt (encrypted with the student secret).
+    onChange({ enrollStatus: 'saving' });
+    await saveEnrollment(
+      state.universityId,
+      result.leafIndex,
+      result.communityKeyWrapped,
+    );
+
+    onChange({ enrollStatus: 'done' });
+    toast('Enrolment complete.', 'success');
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Enrolment failed.';
+    let friendly = message;
+    if (message === 'ceiling reached') {
+      friendly =
+        'This university has reached its enrolment ceiling. Please contact the registrar.';
+    } else if (message === 'invalid ticket') {
+      friendly =
+        'Your enrolment ticket is invalid or has expired. Request a new code.';
+    } else if (message.startsWith('HTTP 400')) {
+      friendly = 'Enrolment was rejected by the server. Please try again.';
+    }
+    onChange({ enrollStatus: 'error', enrollError: friendly });
+    toast(friendly, 'danger');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,7 +635,7 @@ export function renderWizard(
     1: (s) => renderStep1(s, universities, onChange),
     2: (s) => renderStep2(s, onChange),
     3: (s) => renderStep3(s, onChange),
-    4: () => renderStep4(),
+    4: (s) => renderStep4(s, onChange),
   };
 
   function isValid(s: WizardState): boolean {
@@ -441,6 +664,19 @@ export function renderWizard(
     backBtn.disabled = state.step <= 1;
     nextBtn.disabled = !isValid(state);
     nextBtn.textContent = state.step === 4 ? 'Finish' : 'Next';
+
+    // Kick off the OTP request when step 2 first becomes visible.
+    if (state.step === 2 && state.email && !state.otpRequested) {
+      void requestOtp(state.email).then(
+        () => onChange({ otpRequested: true }),
+        (error) => {
+          onChange({
+            otpError:
+              error instanceof Error ? error.message : 'Could not send code.',
+          });
+        },
+      );
+    }
   }
 
   backBtn.addEventListener('click', () => {
@@ -451,8 +687,7 @@ export function renderWizard(
 
   nextBtn.addEventListener('click', () => {
     if (state.step === 4) {
-      clearPersisted();
-      toast('Onboarding complete.', 'success');
+      // Handled by the Finish button in step 4.
       return;
     }
     onChange({ step: (state.step + 1) as Step });
