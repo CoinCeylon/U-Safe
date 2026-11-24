@@ -8,6 +8,11 @@ Record package names, versions and adaptations here.
 - tsx for running TypeScript server code in development.
 - concurrently for running server + web in `npm run dev`.
 - Vite proxies `/api` to `http://127.0.0.1:3000` in development.
+- Mesh SDK `@meshsdk/core` ^1.9.1 for the Lace (CIP-30 / CIP-8) wallet integration:
+  `BrowserWallet.getInstalledWallets()`, `BrowserWallet.enable('lace')`,
+  `browserWallet.signData(payload, address?)` returning `DataSignature { signature, key }`,
+  and `browserWallet.getUsedAddresses()`. Lace wallet name is `lace`; install URL
+  is `https://lace.dev/`.
 - Mail: `nodemailer` ^6.9.16 with `@types/nodemailer` ^8.0.2; `MAIL_MODE=dev|smtp`
   selects `ConsoleMailer` or `SmtpMailer`. Dev messages go to `server/.dev-mailbox/`,
   which is git-ignored; the console prints only the OTP code and file path, never the
