@@ -642,6 +642,38 @@ export const buildApp = async (
     },
   );
 
+  // Status history contains only status, time, actor role and note hashes.
+  // Students, university staff and UGC staff may read it for their own scope.
+  app.get<{ Params: { id: string } }>(
+    '/api/complaints/:id/history',
+    async (request, reply) => {
+      const parsedQuery = universityQuerySchema.safeParse(request.query);
+      if (!parsedQuery.success) {
+        reply.code(400);
+        return { error: 'invalid query' };
+      }
+      const viewer = resolveViewer(
+        db,
+        request,
+        parsedQuery.data.university,
+        reply,
+      );
+      if (viewer === null) {
+        return reply;
+      }
+
+      try {
+        return await complaints.getHistory({
+          viewerRole: viewer.viewerRole,
+          universityId: viewer.universityId,
+          complaintId: request.params.id,
+        });
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
   app.get('/api/stats', async (request, reply) => {
     const parsedQuery = universityQuerySchema.safeParse(request.query);
     if (!parsedQuery.success) {

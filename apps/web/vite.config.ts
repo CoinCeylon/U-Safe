@@ -1,9 +1,12 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import { nodePolyfills } from 'vite-plugin-node-polyfills';
 
 const html = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
+  // The Mesh SDK (Lace wallet) uses Node built-ins (crypto, Buffer, process).
+  plugins: [nodePolyfills()],
   server: {
     proxy: {
       '/api': {

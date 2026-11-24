@@ -79,3 +79,41 @@ Record package names, versions and adaptations here.
   because it requires the student secret, which is derived in M051. Once the secret is
   available, the persisted progress moves into `SecureStore` (encrypted with the secret).
   Sensitive values (OTP code, wallet signature, student secret) are never persisted.
+
+- Student portal blank page fix: `wallet.ts` no longer imports `@meshsdk/core` at module
+  level. Mesh is loaded with a dynamic `import('@meshsdk/core')` on first use
+  (`connect`, `isLaceInstalled`), because its dependencies reference Node built-ins and
+  broke the whole portal module graph at page load. `isLaceInstalled()` is now async.
+- Mesh's Node built-in imports (for example `pbkdf2Sync` from `crypto`) are provided by
+  `vite-plugin-node-polyfills` ^0.28.0 (devDependency of `@usafe/web`) in `apps/web/vite.config.ts`.
+  Without it the production build fails with `"pbkdf2Sync" is not exported by "__vite-browser-external"`.
+- `vite` ^6.4.6 is a root devDependency because `vitest` 5 declares it as a peer, and
+  `npm install` runs with `--legacy-peer-deps` (the `@types/node` peer conflict otherwise
+  stops the install).
+- `student/main.ts` starts the university request once at module load without awaiting
+  it, and the Home route waits on that shared promise. The router renders a first visit
+  twice (it sets the hash), and two identical requests in flight left one stuck in the
+  browser, so the wizard never appeared. A top-level `await` was also removed; the portal
+  renders at once and shows "Loading universities…" until the list arrives.
+- `ui/toast.ts` mounts each toast itself in a fixed `#usafe-toast-host` on `document.body`
+  and removes it after 6 s (only while it is still mounted there). The student wizard
+  ignored the element `toast()` returned, so no wizard message was ever visible.
+- M056 builds the support proof directly from the locally cached Merkle path in
+  `CachedCredential`. `proveMembershipMock` requires a full leaf list, but the portal
+  already refreshed that list locally in M053, so re-downloading it for every support
+  would add traffic without adding privacy. The leaf index is never a separate field in
+  the request body; it only appears inside the mock proof, which the server verifies
+  and discards.
+- Supported complaint ids are stored through `SecureStore` (IndexedDB, encrypted with
+  the student secret), not `localStorage`. The university id is remembered in
+  `sessionStorage` because it is non-sensitive and lets a reloaded portal ask the wallet
+  to re-derive the secret.
+- A support action is delayed with `SubmitQueue` for a random 2–12 seconds. A repeated
+  support response (400/409 nullifier already used) is treated as a quiet success by
+  the UI so a double click cannot appear as an error.
+- `IndexedDbStorage.getStore()` returns the object store while the transaction is still
+  active. Resolving it on `tx.oncomplete` made the store unusable and left enrolment
+  stuck at "Saving your enrolment receipt…". The database is opened at its current
+  version (not a hard-coded version 1); when another store already exists at that
+  version, `openDb` upgrades once so enrolment and supported-id stores can share one
+  database without a `VersionError`.

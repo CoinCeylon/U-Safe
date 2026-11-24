@@ -14,6 +14,7 @@
 // See docs/DECISIONS.md for the persistence choice.
 
 import { button } from '../ui/button';
+import { navigate } from '../lib/router';
 import { input } from '../ui/input';
 import { select } from '../ui/select';
 import { toast } from '../ui/toast';
@@ -534,7 +535,14 @@ function renderStep4(
     next.className = 'text-sm';
     next.textContent =
       'Your enrolment receipt is saved. You can now open the feed and file or support complaints.';
-    success.append(ok, next);
+    const openFeed = button({
+      label: 'Open community feed',
+      variant: 'primary',
+      onClick: () => {
+        navigate('/feed');
+      },
+    });
+    success.append(ok, next, openFeed);
     section.append(success);
   }
 

@@ -1,44 +1,37 @@
-// Student community feed page (M054).
+// Student community feed (M054/M056).
 //
-// Shows cards with complaint urgency badge, status badge, support count,
-// and whether the description is restricted (UGC-owned). Includes live updates
-// via SSE from /api/events.
-//
-// After enrolment, the student's community key is stored in SecureStore
-// (encrypted with the student secret). UGC-owned complaints show
-// "Details restricted to the UGC" instead of text.
-//
-// Live updates: the portal subscribes to /api/events and re-renders new
-// complaints without a page refresh. A toast appears when a new complaint
-// arrives from another student.
+// Lists complaints for the student's university with filters and sorting, and
+// listens to /api/events so complaints filed in another browser appear without
+// a refresh. Cards link to the detail page where the support button lives.
 
 import { toast } from '../ui/toast';
 import { getStudentSecret } from './unlock';
-import { getCachedCredential } from './credential';
+import { getCachedCredential, refreshCredential } from './credential';
+import { ensureUnlocked } from './session';
 
-// --- helpers ---
+interface FeedComplaint {
+  id: string;
+  category: string;
+  urgency: string;
+  status: string;
+  supportCount: number;
+  ownerRole: string;
+  createdAt: string;
+  escalated: boolean;
+}
 
-const severityClass = (urgency: string): string => {
-  const map: Record<string, string> = {
-    normal: 'primary',
-    urgent: 'danger',
-  };
-  return map[urgency] ?? 'primary';
-};
+type SortMode = 'newest' | 'supported';
 
-const statusBadgeClass = (status: string): string => {
-  const map: Record<string, string> = {
-    not_started: 'warning',
-    pending_investigation: 'primary',
-    finished: 'success',
-  };
-  return map[status] ?? 'neutral';
-};
+let eventSource: EventSource | null = null;
 
 export async function renderFeed(outlet: HTMLElement): Promise<void> {
-  const secret = getStudentSecret();
-  if (secret === null) {
-    outlet.innerHTML = '<p class="text-slate-600">Please enrol first.</p>';
+  if (eventSource !== null) {
+    eventSource.close();
+    eventSource = null;
+  }
+
+  if (getStudentSecret() === null) {
+    outlet.replaceChildren(unlockPrompt(outlet));
     return;
   }
 
@@ -51,75 +44,238 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
   const universityId = cred.universityId;
   const univParam = encodeURIComponent(universityId);
 
-  // ---- fetch complaint list ----
-  async function loadComplaints(): Promise<void> {
+  const wrapper = document.createElement('section');
+  wrapper.className = 'flex flex-col gap-3 max-w-xl mx-auto py-2';
+
+  const controls = document.createElement('div');
+  controls.className = 'flex flex-col sm:flex-row gap-2';
+
+  const statusFilter = selectControl(
+    'Filter by status',
+    [
+      ['', 'All statuses'],
+      ['not_started', 'Not started'],
+      ['pending_investigation', 'Pending investigation'],
+      ['finished', 'Finished'],
+    ],
+    '',
+  );
+  const categoryFilter = selectControl(
+    'Filter by category',
+    [
+      ['', 'All categories'],
+      ['verbal', 'Verbal'],
+      ['physical', 'Physical'],
+      ['sexual', 'Sexual'],
+      ['cyber', 'Cyber'],
+      ['financial', 'Financial'],
+      ['other', 'Other'],
+    ],
+    '',
+  );
+  const sort = selectControl(
+    'Sort complaints',
+    [
+      ['newest', 'Newest first'],
+      ['supported', 'Most supported'],
+    ],
+    'newest',
+  );
+  controls.append(statusFilter, categoryFilter, sort);
+
+  const list = document.createElement('div');
+  list.className = 'flex flex-col gap-3';
+
+  wrapper.append(controls, list);
+  outlet.replaceChildren(wrapper);
+
+  const loadComplaints = async (): Promise<void> => {
     try {
-      const res = await fetch(`/api/complaints?${univParam}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as {
-        complaints: Array<{ id: string; urgency: string; status: string; supportCount: number; ownerRole: string }>;
-      };
-      const complaintsLocal = (data.complaints || []).map((c) => ({
-        id: c.id,
-        urgency: c.urgency ?? 'normal',
-        status: c.status ?? 'not_started',
-        supportCount: c.supportCount ?? 0,
-        restricted: (c.ownerRole ?? '') === 'ugc',
-      }));
-
-      // render
-      const container = document.createElement('div');
-      container.className = 'space-y-3';
-      if (complaintsLocal.length === 0) {
-        container.innerHTML = '<p class="text-slate-600">No complaints found.</p>';
-      } else {
-        for (const c of complaintsLocal) {
-          const card = document.createElement('div');
-          card.className = 'p-3 border rounded-lg border-slate-200';
-          card.innerHTML = `
-            <div class="flex items-center justify-between mb-1">
-              <h3 class="font-medium text-slate-900">Complaint #${c.id}</h3>
-              <span class="text-xs text-slate-500">
-                <span class="${severityClass(c.urgency)} urgency"></span>
-                <span class="text-${statusBadgeClass(c.status)}-600 status"></span>
-                <span class="ml-2">• ${c.supportCount} support${c.supportCount !== 1 ? 's' : ''}</span>
-              </span>
-            </div>
-            <p class="text-sm text-slate-600 desc">
-              ${c.restricted ? 'Details restricted to the UGC' : 'Loading description…'}
-            </p>
-            <button class="mt-2 text-primary underline text-xs show-detail">
-              ${c.restricted ? 'Show details' : 'Close'}
-            </button>
-          `;
-          container.append(card);
-        }
+      const response = await fetch(`/api/complaints?university=${univParam}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-      outlet.innerHTML = '';
-      outlet.append(container);
-    } catch (e) {
-      outlet.innerHTML = `<p class="text-danger">Failed to load complaints: ${e instanceof Error ? e.message : String(e)}</p>`;
-    }
-  }
+      const payload = (await response.json()) as { complaints?: FeedComplaint[] };
+      const complaints = (payload.complaints ?? []).filter((complaint) => {
+        const statusOk = statusFilter.value === '' || complaint.status === statusFilter.value;
+        const categoryOk = categoryFilter.value === '' || complaint.category === categoryFilter.value;
+        return statusOk && categoryOk;
+      });
 
-  // ---- subscribe to SSE ----
-  function subscribeEvents(): void {
-    const evtSource = new EventSource(`/api/events?${univParam}`);
-    evtSource.onmessage = (event) => {
-      try {
-        const data: { type: string; id?: string } = JSON.parse(event.data as string /* eslint-disable-line @typescript-eslint/no-unsafe-assignment */);
-        if (data.type === 'complaint.created' as string) {
-          void loadComplaints();
+      const mode = sort.value as SortMode;
+      complaints.sort((a, b) => {
+        if (mode === 'supported') {
+          return b.supportCount - a.supportCount;
+        }
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+
+      renderList(list, complaints);
+    } catch {
+      // Error details are deliberately not shown to the student.
+      list.innerHTML =
+        '<p class="text-danger">Could not load complaints. Please try again.</p>';
+    }
+  };
+
+  statusFilter.addEventListener('change', () => void loadComplaints());
+  categoryFilter.addEventListener('change', () => void loadComplaints());
+  sort.addEventListener('change', () => void loadComplaints());
+
+  await loadComplaints();
+
+  eventSource = new EventSource(`/api/events?university=${univParam}`);
+  eventSource.onmessage = (event) => {
+    try {
+      const data = awaitSafeJson(String(event.data)) as { type?: unknown };
+      if (
+        data.type === 'complaint.created' ||
+        data.type === 'complaint.supported' ||
+        data.type === 'complaint.status' ||
+        data.type === 'complaint.escalated'
+      ) {
+        void loadComplaints();
+        if (data.type === 'complaint.created') {
           toast('A new complaint was filed.', 'info');
         }
-      } catch {
-        // ignore malformed messages
       }
-    };
-    evtSource.onerror = () => evtSource.close();
+    } catch {
+      // Ignore malformed event data; live updates are best-effort.
+    }
+  };
+  eventSource.onerror = () => {
+    eventSource?.close();
+    eventSource = null;
+  };
+}
+
+function renderList(outlet: HTMLElement, complaints: FeedComplaint[]): void {
+  outlet.replaceChildren();
+  if (complaints.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-slate-600';
+    empty.textContent = 'No complaints match these filters.';
+    outlet.append(empty);
+    return;
   }
 
-  // ---- init ----
-  await loadComplaints();
-  subscribeEvents();
+  for (const complaint of complaints) {
+    const card = document.createElement('article');
+    card.className = 'rounded-lg border border-slate-200 bg-white p-4';
+
+    const heading = document.createElement('h3');
+    heading.className = 'font-medium text-slate-900';
+    heading.textContent = `Complaint ${complaint.id}`;
+    card.append(heading);
+
+    const meta = document.createElement('p');
+    meta.className = 'mt-1 text-xs text-slate-500';
+    meta.textContent = `${titleCase(complaint.category)} • ${complaint.urgency} • ${statusLabel(complaint.status)} • ${formatAge(complaint.createdAt)}`;
+    card.append(meta);
+
+    const supports = document.createElement('p');
+    supports.className = 'mt-2 text-sm text-slate-700';
+    supports.textContent = `${complaint.supportCount} ${complaint.supportCount === 1 ? 'support' : 'supports'}`;
+    card.append(supports);
+
+    if (complaint.escalated) {
+      const badge = document.createElement('span');
+      badge.className = 'mt-2 inline-block rounded bg-danger-light px-2 py-1 text-xs text-danger';
+      badge.textContent = 'Overdue';
+      card.append(badge);
+    }
+
+    const description = document.createElement('p');
+    description.className = 'mt-2 text-sm text-slate-600';
+    description.textContent =
+      complaint.ownerRole === 'ugc'
+        ? 'Details restricted to the UGC'
+        : 'Open the complaint to read its encrypted payload.';
+    card.append(description);
+
+    const link = document.createElement('a');
+    link.href = `#/complaint/${encodeURIComponent(complaint.id)}`;
+    link.className = 'mt-2 inline-block text-sm text-primary underline';
+    link.textContent = 'View details and support';
+    card.append(link);
+
+    outlet.append(card);
+  }
+}
+
+function selectControl(
+  label: string,
+  options: Array<[string, string]>,
+  value: string,
+): HTMLSelectElement {
+  const select = document.createElement('select');
+  select.className =
+    'w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary-light';
+  select.setAttribute('aria-label', label);
+  for (const [optionValue, optionLabel] of options) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = optionLabel;
+    select.append(option);
+  }
+  select.value = value;
+  return select;
+}
+
+function unlockPrompt(outlet: HTMLElement): HTMLElement {
+  const wrapper = document.createElement('section');
+  wrapper.className = 'flex flex-col gap-3 max-w-md mx-auto py-4';
+  const message = document.createElement('p');
+  message.className = 'text-sm text-slate-600';
+  message.textContent = 'Unlock your student secret to see your community feed.';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className =
+    'rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-white';
+  button.textContent = 'Unlock student secret';
+  button.addEventListener('click', () => {
+    void (async () => {
+      const universityId = sessionStorage.getItem('usafe-student-university');
+      if (!universityId) {
+        toast('Please enrol before opening the feed.', 'danger');
+        return;
+      }
+      try {
+        await ensureUnlocked(universityId);
+        await refreshCredential(universityId);
+        await renderFeed(outlet);
+      } catch (error) {
+        toast(error instanceof Error ? error.message : 'Could not unlock.', 'danger');
+      }
+    })();
+  });
+  wrapper.append(message, button);
+  return wrapper;
+}
+
+function awaitSafeJson(raw: string): unknown {
+  return JSON.parse(raw) as unknown;
+}
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    not_started: 'Not started',
+    pending_investigation: 'Pending investigation',
+    finished: 'Finished',
+  };
+  return labels[status] ?? status;
+}
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).replace('_', ' ');
+}
+
+function formatAge(createdAt: string): string {
+  const diffMs = Date.now() - new Date(createdAt).getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays < 1) {
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    return diffHours === 0 ? 'just now' : `${diffHours}h ago`;
+  }
+  return `${diffDays}d ago`;
 }

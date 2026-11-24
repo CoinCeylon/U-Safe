@@ -10,6 +10,7 @@
 
 import { SecureStore, IndexedDbStorage } from '@usafe/crypto';
 import { getStudentSecret } from './unlock';
+import { rememberUniversity } from './session';
 
 export interface OtpTicket {
   ticket: string;
@@ -93,4 +94,7 @@ export async function saveEnrollment(
     communityKey: communityKeyWrapped,
   });
   await store.put('enrollment', value);
+  // The university id is not sensitive. Keeping it for the session lets a
+  // reloaded portal ask the wallet to re-derive the secret and open the feed.
+  rememberUniversity(universityId);
 }

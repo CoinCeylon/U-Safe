@@ -19,12 +19,16 @@
 // Never invent Mesh SDK APIs. If @meshsdk/core changes, adapt this file and
 // record the difference in docs/DECISIONS.md.
 
-import { BrowserWallet, type DataSignature } from '@meshsdk/core';
+import type { BrowserWallet, DataSignature } from '@meshsdk/core';
 
 const LACE_WALLET_NAME = 'lace';
 const LACE_INSTALL_URL = 'https://lace.dev/';
 // Default passphrase used by the fake wallet when none is supplied (dev only).
 const DEV_FAKE_PASSPHRASE = 'u-safe-dev-fake-wallet';
+
+// Mesh is loaded on first use only. Its dependencies need Node built-ins, so a
+// static import would stop the whole student portal from loading (blank page).
+const loadMesh = () => import('@meshsdk/core');
 
 export type WalletType = 'lace' | 'fake';
 
@@ -57,14 +61,15 @@ class LaceWallet implements StudentWallet {
   }
 
   async connect(): Promise<void> {
-    const installed = BrowserWallet.getInstalledWallets();
+    const mesh = await loadMesh();
+    const installed = mesh.BrowserWallet.getInstalledWallets();
     const lace = installed.find((w) => w.name === LACE_WALLET_NAME);
     if (!lace) {
       throw new Error(
         'Lace wallet is not installed. Install it from ' + LACE_INSTALL_URL,
       );
     }
-    this.wallet = await BrowserWallet.enable(LACE_WALLET_NAME);
+    this.wallet = await mesh.BrowserWallet.enable(LACE_WALLET_NAME);
 
     const addresses = await this.wallet.getUsedAddresses();
     this.address = addresses[0] ?? null;
@@ -178,9 +183,10 @@ export function getAddress(): string | null {
   return active?.getAddress() ?? null;
 }
 
-export function isLaceInstalled(): boolean {
+export async function isLaceInstalled(): Promise<boolean> {
   try {
-    const installed = BrowserWallet.getInstalledWallets();
+    const mesh = await loadMesh();
+    const installed = mesh.BrowserWallet.getInstalledWallets();
     return installed.some((w) => w.name === LACE_WALLET_NAME);
   } catch {
     return false;

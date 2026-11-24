@@ -52,27 +52,49 @@ export class IndexedDbStorage implements StorageBackend {
     if (this.dbPromise) {
       return this.dbPromise;
     }
-    this.dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(this.dbName, 1);
+    // Open at the database's current version. Requesting version 1 fails with
+    // VersionError once another SecureStore upgraded the same database.
+    this.dbPromise = this.openDb();
+    return this.dbPromise;
+  }
+
+  private async openDb(version?: number): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+      const req =
+        version === undefined
+          ? indexedDB.open(this.dbName)
+          : indexedDB.open(this.dbName, version);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
           db.createObjectStore(this.storeName);
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        // The database may already exist at this version with a different
+        // store (enrolment and supported ids share one database). Upgrade once
+        // so this store is created too.
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          const nextVersion = db.version + 1;
+          db.close();
+          this.openDb(nextVersion).then(resolve, reject);
+          return;
+        }
+        resolve(db);
+      };
       req.onerror = () => reject(new Error(String(req.error)));
     });
-    return this.dbPromise;
   }
 
   private async getStore(mode: IDBTransactionMode): Promise<IDBObjectStore> {
     const db = await this.getDb();
-    const tx = db.transaction(this.storeName, mode);
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve(tx.objectStore(this.storeName));
-      tx.onerror = () => reject(new Error(String(tx.error)));
-    });
+    // Return the object store while the transaction is still active. Resolving
+    // on `tx.oncomplete` made the store unusable: IndexedDB had already
+    // committed the transaction by the time the caller scheduled a request.
+    // Request handlers below report failures, and the transaction commits once
+    // the scheduled request finishes.
+    return db.transaction(this.storeName, mode).objectStore(this.storeName);
   }
 
   async getItem(key: string): Promise<string | null> {

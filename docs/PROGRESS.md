@@ -56,3 +56,5 @@ M053 | done | Credential refresh (MerkleTree credential computation)
 M054 | done | Community feed page with SSE live updates, complaint cards, filters, and sorting
 
 M055 | done | Complaint detail page with full description, status timeline, and outcome message
+
+M056 | done | Anonymous support flow: unlock on demand, locally built mock proof, 2–12 s queued submission, optimistic count, quiet duplicate handling, and encrypted local support state
