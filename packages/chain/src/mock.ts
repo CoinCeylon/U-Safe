@@ -1,13 +1,23 @@
 import type Database from 'better-sqlite3';
+import { randomBytes } from 'node:crypto';
 import {
   computeZeroNodes,
   MERKLE_TREE_DEPTH,
   MerkleTree,
   Sha256Adapter,
+  type MockProofData,
+  verifyMembershipMock,
 } from '@usafe/crypto';
+import {
+  DEMO_SLA_SECONDS,
+  NORMAL_DEADLINE_SECONDS,
+  URGENT_DEADLINE_SECONDS,
+} from '@usafe/shared';
 import type {
   EnrollCommitmentInput,
   EnrollCommitmentResult,
+  FileComplaintInput,
+  FileComplaintResult,
   GetLeavesInput,
   GetLeavesResult,
   GetRootsInput,
@@ -157,12 +167,126 @@ export class MockLedger implements LedgerAdapter {
   }
 
   // ------------------------------------------------------------------
-  // Not yet implemented (M038-M047)
+  // Verify membership proof (M038)
   // ------------------------------------------------------------------
 
-  fileComplaint(): Promise<import('@usafe/shared').FileComplaintResult> {
-    throw new Error('fileComplaint is not yet implemented (M039)');
+  /**
+   * Server-side verification of a mock membership proof. Checks that the root
+   * is within the grace window, the Merkle path is valid, and the nullifier
+   * has not been used before. Does not persist anything from the proof.
+   */
+  async verifyMembershipMock(
+    proof: MembershipProof,
+  ): Promise<boolean> {
+    const { roots } = await this.getRoots({ universityId: proof.universityId });
+
+    const usedRows = this.db
+      .prepare(`SELECT value FROM ml_nullifiers WHERE kind = 'membership'`)
+      .all() as Array<{ value: string }>;
+    const usedNullifiers = new Set(usedRows.map((row) => row.value));
+
+    return verifyMembershipMock(proof, { roots, usedNullifiers });
   }
+
+  // ------------------------------------------------------------------
+  // File a complaint (M039)
+  // ------------------------------------------------------------------
+
+  async fileComplaint(
+    input: FileComplaintInput,
+  ): Promise<FileComplaintResult> {
+    // 1. Verify the membership proof (root in grace window, valid Merkle path,
+    //    nullifier not already used).
+    const proofValid = await this.verifyMembershipMock(input.proof);
+    if (!proofValid) {
+      throw new Error('invalid membership proof');
+    }
+
+    // 2. Parse the proof data to extract the filing context.
+    const data = JSON.parse(input.proof.data) as MockProofData;
+    const contextParts = data.context.split('|');
+    if (contextParts[0] !== 'file' || contextParts.length !== 3) {
+      throw new Error('proof context must be a filing context: file|<yearMonth>|<slot>');
+    }
+    const slot = Number(contextParts[2]);
+    if (slot !== 0 && slot !== 1) {
+      throw new Error('filing slot must be 0 or 1');
+    }
+
+    // 3. Reject a reused filing nullifier. With only two slots (0 and 1) per
+    //    year-month, a third filing would have to reuse one of them, so
+    //    nullifier uniqueness enforces the per-student monthly filing limit.
+    const existing = this.db
+      .prepare(
+        `SELECT value FROM ml_nullifiers WHERE kind = 'filing' AND value = ?`,
+      )
+      .get(input.proof.nullifier) as { value: string } | undefined;
+    if (existing !== undefined) {
+      throw new Error('filing nullifier already used');
+    }
+
+    // 4. Assign a sequential id.
+    const id = `c-${Date.now()}-${randomBytes(8).toString('hex')}`;
+
+    // 5. Set deadlineAt from urgency (DEMO_SLA_SECONDS override for demos).
+    const now = Date.now();
+    let deadlineSeconds: number;
+    if (DEMO_SLA_SECONDS !== undefined && DEMO_SLA_SECONDS !== null) {
+      deadlineSeconds = DEMO_SLA_SECONDS;
+    } else if (input.urgency === 'urgent') {
+      deadlineSeconds = URGENT_DEADLINE_SECONDS;
+    } else {
+      deadlineSeconds = NORMAL_DEADLINE_SECONDS;
+    }
+    const createdAt = new Date(now).toISOString();
+    const deadlineAt = new Date(now + deadlineSeconds * 1000).toISOString();
+
+    // 6. Determine owner role: staff-involved complaints are owned by the UGC.
+    const ownerRole = input.staffInvolved ? 'ugc' : 'university';
+
+    // 7. Store the complaint record, the first history row, and the nullifier
+    //    in a single transaction.
+    const insertComplaint = this.db.prepare(`
+      INSERT INTO ml_complaints (
+        id, university_id, category, urgency, staff_involved, owner_role,
+        payload_hash, payload_locator, created_at, deadline_at, status,
+        escalated, reopened, support_count, outcome_hash, last_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started', 0, 0, 0, NULL, ?)
+    `);
+    const insertHistory = this.db.prepare(`
+      INSERT INTO ml_history (complaint_id, status, at, actor_role, note_hash)
+      VALUES (?, 'not_started', ?, 'student', NULL)
+    `);
+    const insertNullifier = this.db.prepare(`
+      INSERT INTO ml_nullifiers (kind, value) VALUES ('filing', ?)
+    `);
+
+    const transaction = this.db.transaction(() => {
+      insertComplaint.run(
+        id,
+        input.universityId,
+        input.category,
+        input.urgency,
+        input.staffInvolved ? 1 : 0,
+        ownerRole,
+        input.payloadHash,
+        input.payloadLocator ?? null,
+        createdAt,
+        deadlineAt,
+        createdAt,
+      );
+      insertHistory.run(id, createdAt);
+      insertNullifier.run(input.proof.nullifier);
+    });
+    transaction();
+
+    return { id };
+  }
+
+  // ------------------------------------------------------------------
+  // Not yet implemented (M040-M047)
+  // ------------------------------------------------------------------
+
   supportComplaint(): Promise<import('@usafe/shared').SupportComplaintResult> {
     throw new Error('supportComplaint is not yet implemented (M040)');
   }
@@ -187,6 +311,10 @@ export class MockLedger implements LedgerAdapter {
   getStats(): Promise<import('@usafe/shared').GetStatsResult> {
     throw new Error('getStats is not yet implemented (M046)');
   }
+
+  // ------------------------------------------------------------------
+  // Not yet implemented (M040-M047)
+  // ------------------------------------------------------------------
 
   // ------------------------------------------------------------------
   // Private helpers

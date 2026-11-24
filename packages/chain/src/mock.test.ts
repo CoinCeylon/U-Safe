@@ -4,7 +4,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { MerkleTree, Sha256Adapter } from '@usafe/crypto';
+import {
+  MerkleTree,
+  Sha256Adapter,
+  proveMembershipMock,
+  hash,
+} from '@usafe/crypto';
+import { DOMAIN_TAG_COMMITMENT } from '@usafe/crypto';
 import { MockLedger } from './mock.js';
 
 const newDb = (): { db: Database.Database; dir: string } => {
@@ -35,6 +41,38 @@ const newDb = (): { db: Database.Database; dir: string } => {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (university_id, root),
       FOREIGN KEY (university_id) REFERENCES universities (id)
+    );
+    CREATE TABLE ml_nullifiers (
+      kind TEXT NOT NULL,
+      value TEXT NOT NULL,
+      PRIMARY KEY (kind, value)
+    );
+    CREATE TABLE ml_complaints (
+      id TEXT PRIMARY KEY,
+      university_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      urgency TEXT NOT NULL,
+      staff_involved INTEGER NOT NULL DEFAULT 0,
+      owner_role TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      payload_locator TEXT,
+      created_at TEXT NOT NULL,
+      deadline_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'not_started',
+      escalated INTEGER NOT NULL DEFAULT 0,
+      reopened INTEGER NOT NULL DEFAULT 0,
+      support_count INTEGER NOT NULL DEFAULT 0,
+      outcome_hash TEXT,
+      last_updated_at TEXT NOT NULL,
+      FOREIGN KEY (university_id) REFERENCES universities (id)
+    );
+    CREATE TABLE ml_history (
+      complaint_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      at TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      note_hash TEXT,
+      FOREIGN KEY (complaint_id) REFERENCES ml_complaints (id)
     );
   `);
   return { db, dir };
@@ -151,6 +189,163 @@ describe('MockLedger (M037)', () => {
     expect(roots.currentRoot).toBe(r2.root);
     expect(roots.roots).toContain(r1.root);
     expect(roots.roots).toContain(r2.root);
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('fileComplaint accepts a valid filing, rejects duplicate nullifier, and enforces two slots per month', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    // Enroll a student.
+    const secret = randomBytes(32);
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    expect(leaves.commitments).toContain(commitmentHex);
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    // Build a mock proof for filing (slot 0).
+    const proof0 = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|0`,
+    );
+    proof0.universityId = 'uni-1';
+
+    const result0 = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof: proof0,
+    });
+    expect(result0.id).toMatch(/^c-/);
+
+    // Same nullifier again (same slot 0) -> rejected.
+    await expect(
+      ledger.fileComplaint({
+        universityId: 'uni-1',
+        category: 'verbal',
+        urgency: 'normal',
+        staffInvolved: false,
+        payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+        payloadLocator: null,
+        proof: proof0,
+      }),
+    ).rejects.toThrow('filing nullifier already used');
+
+    // Second filing with slot 1 -> accepted (different nullifier).
+    const proof1 = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|1`,
+    );
+    proof1.universityId = 'uni-1';
+    const result1 = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'physical',
+      urgency: 'urgent',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof: proof1,
+    });
+    expect(result1.id).toMatch(/^c-/);
+
+    // Third filing with slot 0 -> rejected (both slots used).
+    await expect(
+      ledger.fileComplaint({
+        universityId: 'uni-1',
+        category: 'verbal',
+        urgency: 'normal',
+        staffInvolved: false,
+        payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+        payloadLocator: null,
+        proof: proof0,
+      }),
+    ).rejects.toThrow('filing nullifier already used');
+
+    // Invalid proof (wrong universityId) -> rejected.
+    const badProof = { ...proof0, universityId: 'no-such' };
+    await expect(
+      ledger.fileComplaint({
+        universityId: 'no-such',
+        category: 'verbal',
+        urgency: 'normal',
+        staffInvolved: false,
+        payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+        payloadLocator: null,
+        proof: badProof,
+      }),
+    ).rejects.toThrow();
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('fileComplaint sets ownerRole to ugc when staffInvolved', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const secret = randomBytes(32);
+    const { hash, DOMAIN_TAG_COMMITMENT } = await import('@usafe/crypto');
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `file|${yearMonth}|0`,
+    );
+    proof.universityId = 'uni-1';
+
+    const result = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'sexual',
+      urgency: 'urgent',
+      staffInvolved: true,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof,
+    });
+    expect(result.id).toMatch(/^c-/);
+
+    // Verify the stored record has owner_role = 'ugc'.
+    const row = db
+      .prepare(`SELECT owner_role, status, support_count FROM ml_complaints WHERE id = ?`)
+      .get(result.id) as { owner_role: string; status: string; support_count: number };
+    expect(row.owner_role).toBe('ugc');
+    expect(row.status).toBe('not_started');
+    expect(row.support_count).toBe(0);
 
     db.close();
     rmSync(dir, { recursive: true, force: true });
