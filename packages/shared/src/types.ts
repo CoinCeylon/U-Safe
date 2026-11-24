@@ -5,6 +5,7 @@ export type Urgency = (typeof URGENCIES)[number];
 export type Status = (typeof STATUSES)[number];
 
 export type OwnerRole = 'university' | 'ugc';
+export type ComplaintViewerRole = 'student' | 'university' | 'ugc';
 export type UniversityStatus = 'active' | 'suspended';
 export type HistoryActorRole = 'student' | 'university' | 'ugc' | 'system';
 

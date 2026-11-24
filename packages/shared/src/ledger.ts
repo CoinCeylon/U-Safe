@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type {
   Category,
   ComplaintListItem,
-  ComplaintRecord,
+  ComplaintViewerRole,
   HistoryEntry,
   OwnerRole,
   Status,
@@ -280,8 +280,8 @@ export const reopenComplaintResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface ListComplaintsFilter {
-  viewerRole: 'student' | 'university' | 'ugc';
-  universityId: string;
+  viewerRole: ComplaintViewerRole;
+  universityId?: string;
   status?: Status;
   category?: Category;
   ownerRole?: OwnerRole;
@@ -295,7 +295,7 @@ export interface ListComplaintsResult {
 export const listComplaintsFilterSchema = z
   .object({
     viewerRole: z.enum(['student', 'university', 'ugc']),
-    universityId: z.string().min(1),
+    universityId: z.string().min(1).optional(),
     status: z.enum(['not_started', 'pending_investigation', 'finished']).optional(),
     category: z
       .enum(['verbal', 'physical', 'sexual', 'cyber', 'financial', 'other'])
@@ -361,45 +361,29 @@ export const listComplaintsResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface GetComplaintInput {
+  viewerRole: ComplaintViewerRole;
+  universityId?: string;
   complaintId: string;
 }
 
 export interface GetComplaintResult {
-  complaint: ComplaintRecord;
+  complaint: ComplaintListItem;
 }
 
 export const getComplaintInputSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
+    universityId: z.string().min(1).optional(),
     complaintId: z.string().min(1),
   })
   .strict() satisfies z.ZodType<GetComplaintInput>;
 
 export const getComplaintResultSchema = z
   .object({
-    complaint: z.object({
-      id: z.string().min(1),
-      universityId: z.string().min(1),
-      category: z.enum([
-        'verbal',
-        'physical',
-        'sexual',
-        'cyber',
-        'financial',
-        'other',
-      ]),
-      urgency: z.enum(['normal', 'urgent']),
-      staffInvolved: z.boolean(),
-      ownerRole: z.enum(['university', 'ugc']),
-      payloadHash: z.string().min(1),
-      createdAt: z.string().datetime(),
-      deadlineAt: z.string().datetime(),
-      status: z.enum(['not_started', 'pending_investigation', 'finished']),
-      escalated: z.boolean(),
-      reopened: z.boolean(),
-      supportCount: z.number().int().nonnegative(),
-      outcomeHash: z.string().nullable(),
-      lastUpdatedAt: z.string().datetime(),
-    }),
+    complaint: z.union([
+      complaintRecordResultSchema,
+      redactedComplaintRecordResultSchema,
+    ]),
   })
   .strict() satisfies z.ZodType<GetComplaintResult>;
 
@@ -408,6 +392,8 @@ export const getComplaintResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface GetHistoryInput {
+  viewerRole: ComplaintViewerRole;
+  universityId?: string;
   complaintId: string;
 }
 
@@ -417,6 +403,8 @@ export interface GetHistoryResult {
 
 export const getHistoryInputSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
+    universityId: z.string().min(1).optional(),
     complaintId: z.string().min(1),
   })
   .strict() satisfies z.ZodType<GetHistoryInput>;
@@ -440,6 +428,7 @@ export const getHistoryResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface GetStatsInput {
+  viewerRole: ComplaintViewerRole;
   universityId?: string;
 }
 
@@ -454,6 +443,7 @@ export interface GetStatsResult {
 
 export const getStatsInputSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
     universityId: z.string().min(1).optional(),
   })
   .strict() satisfies z.ZodType<GetStatsInput>;

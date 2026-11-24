@@ -45,3 +45,10 @@ Record package names, versions and adaptations here.
   `SecureStore` backup encrypted with `COMMUNITY_DELIVERY_SECRET`. Existing
   passphrase-protected `.dev-keys` backups are reused, so a second seed run neither
   duplicates rows nor rotates complete demo key sets.
+- M045 makes the mock ledger trust the caller-supplied viewer role and university id;
+  M047's HTTP hooks will derive those fields from a student query or a staff session.
+  Student and university viewers must supply a university id, while UGC viewers omit it to
+  see all universities (or supply one for a focused query). `getHistory` remains visible
+  for university viewers on staff-involved cases because it contains only status,
+  timestamps, actor roles and note hashes allowed by specification section 7.3; the
+  detailed complaint record is what gets redacted.
