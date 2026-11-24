@@ -48,3 +48,4 @@ M047 | done | Mock-ledger HTTP routes wired for enrollment proofs, complaint fil
 M048 | done | Landing page with plain-language explanation, three portal buttons (Student, University, UGC) and a mock-mode banner that appears only when the server reports mock mode.
 M049 | done | Student onboarding wizard with four steps (university/email, OTP code, connect wallet, finish), forward/back navigation, privacy explanation on step 1, and sessionStorage resumption after refresh.
 M050 | done | Wallet connection module with Mesh SDK BrowserWallet for Lace (CIP-30 signData) plus a dev FakeWallet (deterministic HMAC-SHA256 from a passphrase, ?fakewallet=1); unit tests verify deterministic signatures.
+M051 | done | Secret derivation step: unlockStudent signs `U-Safe student secret v1|<universityId>` via the wallet, derives the 32-byte secret with HKDF-SHA256, holds it in memory only, and can compute the public commitment; re-unlocking is deterministic.
