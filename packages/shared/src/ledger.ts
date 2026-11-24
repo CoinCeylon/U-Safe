@@ -1,0 +1,467 @@
+import { z } from 'zod';
+import type {
+  Category,
+  ComplaintRecord,
+  HistoryEntry,
+  OwnerRole,
+  Status,
+  Urgency,
+} from './types';
+
+// ---------------------------------------------------------------------------
+// Membership proof
+// ---------------------------------------------------------------------------
+
+/**
+ * Proof that the caller is an enrolled student of a university.
+ *
+ * - `universityId`: the university whose enrolled-student tree the caller is a member of.
+ * - `root`: the Merkle root the path was computed against (must be within the grace window).
+ * - `nullifier`: a one-way derived value that makes the action unique per student per context.
+ * - `kind`: `'mock'` in mock mode (the proof carries the commitment and Merkle path), `'zk'` on testnet.
+ * - `data`: an opaque string payload. In mock mode this is the serialised Merkle path plus commitment.
+ */
+export type ProofKind = 'mock' | 'zk';
+
+export interface MembershipProof {
+  universityId: string;
+  root: string;
+  nullifier: string;
+  kind: ProofKind;
+  data: string;
+}
+
+export const membershipProofSchema = z
+  .object({
+    universityId: z.string().min(1),
+    root: z.string().min(1),
+    nullifier: z.string().min(1),
+    kind: z.enum(['mock', 'zk']),
+    data: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<MembershipProof>;
+
+// ---------------------------------------------------------------------------
+// Enroll commitment
+// ---------------------------------------------------------------------------
+
+export interface EnrollCommitmentInput {
+  universityId: string;
+  commitment: string;
+}
+
+export interface EnrollCommitmentResult {
+  leafIndex: number;
+  path: string[];
+  root: string;
+}
+
+export const enrollCommitmentInputSchema = z
+  .object({
+    universityId: z.string().min(1),
+    commitment: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<EnrollCommitmentInput>;
+
+export const enrollCommitmentResultSchema = z
+  .object({
+    leafIndex: z.number().int().nonnegative(),
+    path: z.array(z.string().min(1)),
+    root: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<EnrollCommitmentResult>;
+
+// ---------------------------------------------------------------------------
+// Get leaves
+// ---------------------------------------------------------------------------
+
+export interface GetLeavesInput {
+  universityId: string;
+}
+
+export interface GetLeavesResult {
+  commitments: string[]; // hex-encoded commitments, public list used to compute local paths
+}
+
+export const getLeavesInputSchema = z
+  .object({
+    universityId: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<GetLeavesInput>;
+
+export const getLeavesResultSchema = z
+  .object({
+    commitments: z.array(z.string().min(1)),
+  })
+  .strict() satisfies z.ZodType<GetLeavesResult>;
+
+// ---------------------------------------------------------------------------
+// Get roots
+// ---------------------------------------------------------------------------
+
+export interface GetRootsInput {
+  universityId: string;
+}
+
+export interface GetRootsResult {
+  currentRoot: string;
+  roots: string[]; // current root plus every root within the grace window
+}
+
+export const getRootsInputSchema = z
+  .object({
+    universityId: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<GetRootsInput>;
+
+export const getRootsResultSchema = z
+  .object({
+    currentRoot: z.string().min(1),
+    roots: z.array(z.string().min(1)),
+  })
+  .strict() satisfies z.ZodType<GetRootsResult>;
+
+// ---------------------------------------------------------------------------
+// File a complaint
+// ---------------------------------------------------------------------------
+
+export interface FileComplaintInput {
+  universityId: string;
+  category: Category;
+  urgency: Urgency;
+  staffInvolved: boolean;
+  payloadHash: string;
+  payloadLocator: string | null;
+  proof: MembershipProof;
+}
+
+export interface FileComplaintResult {
+  id: string;
+}
+
+export const fileComplaintInputSchema = z
+  .object({
+    universityId: z.string().min(1),
+    category: z.enum([
+      'verbal',
+      'physical',
+      'sexual',
+      'cyber',
+      'financial',
+      'other',
+    ]),
+    urgency: z.enum(['normal', 'urgent']),
+    staffInvolved: z.boolean(),
+    payloadHash: z.string().min(1),
+    payloadLocator: z.string().nullable(),
+    proof: membershipProofSchema,
+  })
+  .strict() satisfies z.ZodType<FileComplaintInput>;
+
+export const fileComplaintResultSchema = z
+  .object({
+    id: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<FileComplaintResult>;
+
+// ---------------------------------------------------------------------------
+// Support a complaint
+// ---------------------------------------------------------------------------
+
+export interface SupportComplaintInput {
+  complaintId: string;
+  proof: MembershipProof;
+}
+
+export interface SupportComplaintResult {
+  supportCount: number;
+}
+
+export const supportComplaintInputSchema = z
+  .object({
+    complaintId: z.string().min(1),
+    proof: membershipProofSchema,
+  })
+  .strict() satisfies z.ZodType<SupportComplaintInput>;
+
+export const supportComplaintResultSchema = z
+  .object({
+    supportCount: z.number().int().nonnegative(),
+  })
+  .strict() satisfies z.ZodType<SupportComplaintResult>;
+
+// ---------------------------------------------------------------------------
+// Update status
+// ---------------------------------------------------------------------------
+
+export interface UpdateStatusInput {
+  complaintId: string;
+  newStatus: Status;
+  outcomeHash: string | null;
+  ownerRole: 'university' | 'ugc';
+}
+
+export interface UpdateStatusResult {
+  complaintId: string;
+  status: Status;
+}
+
+export const updateStatusInputSchema = z
+  .object({
+    complaintId: z.string().min(1),
+    newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
+    outcomeHash: z.string().nullable(),
+    ownerRole: z.enum(['university', 'ugc']),
+  })
+  .strict() satisfies z.ZodType<UpdateStatusInput>;
+
+export const updateStatusResultSchema = z
+  .object({
+    complaintId: z.string().min(1),
+    status: z.enum(['not_started', 'pending_investigation', 'finished']),
+  })
+  .strict() satisfies z.ZodType<UpdateStatusResult>;
+
+// ---------------------------------------------------------------------------
+// Mark escalated
+// ---------------------------------------------------------------------------
+
+export interface MarkEscalatedInput {
+  complaintId: string;
+}
+
+export interface MarkEscalatedResult {
+  complaintId: string;
+  escalated: boolean;
+}
+
+export const markEscalatedInputSchema = z
+  .object({
+    complaintId: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<MarkEscalatedInput>;
+
+export const markEscalatedResultSchema = z
+  .object({
+    complaintId: z.string().min(1),
+    escalated: z.boolean(),
+  })
+  .strict() satisfies z.ZodType<MarkEscalatedResult>;
+
+// ---------------------------------------------------------------------------
+// Reopen complaint
+// ---------------------------------------------------------------------------
+
+export interface ReopenComplaintInput {
+  complaintId: string;
+}
+
+export interface ReopenComplaintResult {
+  complaintId: string;
+  reopened: boolean;
+}
+
+export const reopenComplaintInputSchema = z
+  .object({
+    complaintId: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<ReopenComplaintInput>;
+
+export const reopenComplaintResultSchema = z
+  .object({
+    complaintId: z.string().min(1),
+    reopened: z.boolean(),
+  })
+  .strict() satisfies z.ZodType<ReopenComplaintResult>;
+
+// ---------------------------------------------------------------------------
+// List complaints
+// ---------------------------------------------------------------------------
+
+export interface ListComplaintsFilter {
+  universityId?: string;
+  status?: Status;
+  category?: Category;
+  ownerRole?: OwnerRole;
+  escalated?: boolean;
+}
+
+export interface ListComplaintsResult {
+  complaints: ComplaintRecord[];
+}
+
+export const listComplaintsFilterSchema = z
+  .object({
+    universityId: z.string().min(1).optional(),
+    status: z.enum(['not_started', 'pending_investigation', 'finished']).optional(),
+    category: z
+      .enum(['verbal', 'physical', 'sexual', 'cyber', 'financial', 'other'])
+      .optional(),
+    ownerRole: z.enum(['university', 'ugc']).optional(),
+    escalated: z.boolean().optional(),
+  })
+  .strict() satisfies z.ZodType<ListComplaintsFilter>;
+
+export const listComplaintsResultSchema = z
+  .object({
+    complaints: z.array(
+      z.object({
+        id: z.string().min(1),
+        universityId: z.string().min(1),
+        category: z.enum([
+          'verbal',
+          'physical',
+          'sexual',
+          'cyber',
+          'financial',
+          'other',
+        ]),
+        urgency: z.enum(['normal', 'urgent']),
+        staffInvolved: z.boolean(),
+        ownerRole: z.enum(['university', 'ugc']),
+        payloadHash: z.string().min(1),
+        createdAt: z.string().datetime(),
+        deadlineAt: z.string().datetime(),
+        status: z.enum(['not_started', 'pending_investigation', 'finished']),
+        escalated: z.boolean(),
+        reopened: z.boolean(),
+        supportCount: z.number().int().nonnegative(),
+        outcomeHash: z.string().nullable(),
+        lastUpdatedAt: z.string().datetime(),
+      }),
+    ),
+  })
+  .strict() satisfies z.ZodType<ListComplaintsResult>;
+
+// ---------------------------------------------------------------------------
+// Get complaint
+// ---------------------------------------------------------------------------
+
+export interface GetComplaintInput {
+  complaintId: string;
+}
+
+export interface GetComplaintResult {
+  complaint: ComplaintRecord;
+}
+
+export const getComplaintInputSchema = z
+  .object({
+    complaintId: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<GetComplaintInput>;
+
+export const getComplaintResultSchema = z
+  .object({
+    complaint: z.object({
+      id: z.string().min(1),
+      universityId: z.string().min(1),
+      category: z.enum([
+        'verbal',
+        'physical',
+        'sexual',
+        'cyber',
+        'financial',
+        'other',
+      ]),
+      urgency: z.enum(['normal', 'urgent']),
+      staffInvolved: z.boolean(),
+      ownerRole: z.enum(['university', 'ugc']),
+      payloadHash: z.string().min(1),
+      createdAt: z.string().datetime(),
+      deadlineAt: z.string().datetime(),
+      status: z.enum(['not_started', 'pending_investigation', 'finished']),
+      escalated: z.boolean(),
+      reopened: z.boolean(),
+      supportCount: z.number().int().nonnegative(),
+      outcomeHash: z.string().nullable(),
+      lastUpdatedAt: z.string().datetime(),
+    }),
+  })
+  .strict() satisfies z.ZodType<GetComplaintResult>;
+
+// ---------------------------------------------------------------------------
+// Get history
+// ---------------------------------------------------------------------------
+
+export interface GetHistoryInput {
+  complaintId: string;
+}
+
+export interface GetHistoryResult {
+  entries: HistoryEntry[];
+}
+
+export const getHistoryInputSchema = z
+  .object({
+    complaintId: z.string().min(1),
+  })
+  .strict() satisfies z.ZodType<GetHistoryInput>;
+
+export const getHistoryResultSchema = z
+  .object({
+    entries: z.array(
+      z.object({
+        complaintId: z.string().min(1),
+        status: z.enum(['not_started', 'pending_investigation', 'finished']),
+        at: z.string().datetime(),
+        actorRole: z.enum(['student', 'university', 'ugc', 'system']),
+        noteHash: z.string().nullable(),
+      }),
+    ),
+  })
+  .strict() satisfies z.ZodType<GetHistoryResult>;
+
+// ---------------------------------------------------------------------------
+// Get stats
+// ---------------------------------------------------------------------------
+
+export interface GetStatsInput {
+  universityId?: string;
+}
+
+export interface GetStatsResult {
+  totalComplaints: number;
+  byCategory: Record<Category, number>;
+  byUrgency: Record<Urgency, number>;
+  byStatus: Record<Status, number>;
+  overdue: number;
+  staffInvolved: number;
+}
+
+export const getStatsInputSchema = z
+  .object({
+    universityId: z.string().min(1).optional(),
+  })
+  .strict() satisfies z.ZodType<GetStatsInput>;
+
+export const getStatsResultSchema = z
+  .object({
+    totalComplaints: z.number().int().nonnegative(),
+    byCategory: z
+      .object({
+        verbal: z.number().int().nonnegative(),
+        physical: z.number().int().nonnegative(),
+        sexual: z.number().int().nonnegative(),
+        cyber: z.number().int().nonnegative(),
+        financial: z.number().int().nonnegative(),
+        other: z.number().int().nonnegative(),
+      })
+      .strict(),
+    byUrgency: z
+      .object({
+        normal: z.number().int().nonnegative(),
+        urgent: z.number().int().nonnegative(),
+      })
+      .strict(),
+    byStatus: z
+      .object({
+        not_started: z.number().int().nonnegative(),
+        pending_investigation: z.number().int().nonnegative(),
+        finished: z.number().int().nonnegative(),
+      })
+      .strict(),
+    overdue: z.number().int().nonnegative(),
+    staffInvolved: z.number().int().nonnegative(),
+  })
+  .strict() satisfies z.ZodType<GetStatsResult>;

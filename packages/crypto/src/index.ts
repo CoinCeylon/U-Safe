@@ -78,3 +78,9 @@ export {
   SubmitQueue,
   bucketCount,
 } from './anonymity';
+export {
+  type MockProofContext,
+  type MockProofData,
+  proveMembershipMock,
+  verifyMembershipMock,
+} from './proof';
