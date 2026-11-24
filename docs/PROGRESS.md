@@ -50,3 +50,9 @@ M049 | done | Student onboarding wizard with four steps (university/email, OTP c
 M050 | done | Wallet connection module with Mesh SDK BrowserWallet for Lace (CIP-30 signData) plus a dev FakeWallet (deterministic HMAC-SHA256 from a passphrase, ?fakewallet=1); unit tests verify deterministic signatures.
 M051 | done | Secret derivation step: unlockStudent signs `U-Safe student secret v1|<universityId>` via the wallet, derives the 32-byte secret with HKDF-SHA256, holds it in memory only, and can compute the public commitment; re-unlocking is deterministic.
 M052 | done | Enrollment completion: step 4 unlocks the secret, computes the commitment, calls POST /api/enroll with the ticket, persists the receipt in SecureStore (IndexedDB), and shows a success screen with friendly ceiling/ticket-error messages.
+
+M053 | done | Credential refresh (MerkleTree credential computation)
+
+M054 | done | Community feed page with SSE live updates, complaint cards, filters, and sorting
+
+M055 | done | Complaint detail page with full description, status timeline, and outcome message
