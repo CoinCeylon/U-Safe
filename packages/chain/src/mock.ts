@@ -546,7 +546,7 @@ export class MockLedger implements LedgerAdapter {
     return { complaintId: input.complaintId, escalated: true };
   }
   reopenComplaint(): Promise<import('@usafe/shared').ReopenComplaintResult> {
-    throw new Error('reopenComplaint is not yet implemented (M043)');
+    throw new Error('reopenComplaint is not yet implemented (M079)');
   }
   listComplaints(
     filter: ListComplaintsFilter,

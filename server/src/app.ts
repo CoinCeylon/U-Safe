@@ -1,7 +1,16 @@
-import Fastify, { LogController, type FastifyInstance } from 'fastify';
+import Fastify, {
+  LogController,
+  type FastifyInstance,
+  type FastifyReply,
+} from 'fastify';
 import cors from '@fastify/cors';
-import { LedgerAuthorizationError } from '@usafe/chain';
+import { LedgerAuthorizationError, MockLedger } from '@usafe/chain';
 import type Database from 'better-sqlite3';
+import {
+  fileComplaintInputSchema,
+  supportComplaintInputSchema,
+  type ComplaintViewerRole,
+} from '@usafe/shared';
 import { z } from 'zod';
 import type { Config } from './config.js';
 import { getUniversity, listUniversities } from './services/universities.js';
@@ -17,12 +26,14 @@ import {
 } from './services/ledger.js';
 import { clientIp } from './services/clientIp.js';
 import { addClient, publish, removeClient } from './services/events.js';
+import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
   createChallenge,
   devLogin,
   loginWithSignature,
   requireStaff,
   staffOwnerRole,
+  verifySession,
 } from './services/staffAuth.js';
 import {
   MAX_BLOB_SIZE,
@@ -39,7 +50,10 @@ import {
 } from './services/blobs.js';
 
 const otpRequestSchema = z.object({ email: z.string().email() });
-const otpVerifySchema = z.object({ email: z.string().email(), code: z.string().min(1) });
+const otpVerifySchema = z.object({
+  email: z.string().email(),
+  code: z.string().min(1),
+});
 const enrollSchema = z.object({
   ticket: z.string().min(1),
   commitment: z.string().regex(/^[0-9a-fA-F]{64}$/),
@@ -48,6 +62,83 @@ const complaintStatusSchema = z.object({
   newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
   outcomeHash: z.string().min(1).nullable().default(null),
 });
+const complaintListQuerySchema = z
+  .object({
+    university: z.string().min(1).optional(),
+    status: z
+      .enum(['not_started', 'pending_investigation', 'finished'])
+      .optional(),
+    category: z
+      .enum(['verbal', 'physical', 'sexual', 'cyber', 'financial', 'other'])
+      .optional(),
+    ownerRole: z.enum(['university', 'ugc']).optional(),
+    escalated: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((value) =>
+        value === undefined ? undefined : value === 'true',
+      ),
+  })
+  .strict();
+const universityQuerySchema = z
+  .object({ university: z.string().min(1).optional() })
+  .strict();
+
+interface ComplaintViewer {
+  viewerRole: ComplaintViewerRole;
+  universityId?: string;
+}
+
+const ledgerErrorReply = (
+  reply: FastifyReply,
+  error: unknown,
+): FastifyReply => {
+  if (error instanceof LedgerAuthorizationError) {
+    return reply.code(403).send({ error: 'forbidden' });
+  }
+  if (error instanceof Error && error.message === 'complaint not found') {
+    return reply.code(404).send({ error: 'not found' });
+  }
+  if (error instanceof Error && error.message.includes('not yet implemented')) {
+    return reply.code(501).send({ error: error.message });
+  }
+  if (error instanceof Error) {
+    return reply.code(400).send({ error: error.message });
+  }
+  throw error;
+};
+
+const resolveViewer = (
+  db: Database.Database,
+  request: { headers: { authorization?: string } },
+  university: string | undefined,
+  reply: FastifyReply,
+): ComplaintViewer | null => {
+  const authorization = request.headers.authorization;
+  if (authorization === undefined) {
+    if (university === undefined) {
+      reply.code(400).send({ error: 'university is required' });
+      return null;
+    }
+    return { viewerRole: 'student', universityId: university };
+  }
+
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
+  const staff = verifySession(db, match?.[1] ?? '');
+  if (staff === null) {
+    reply.code(401).send({ error: 'invalid token' });
+    return null;
+  }
+
+  if (staff.university_id === null) {
+    return { viewerRole: 'ugc', universityId: university };
+  }
+  if (university !== undefined && university !== staff.university_id) {
+    reply.code(403).send({ error: 'forbidden' });
+    return null;
+  }
+  return { viewerRole: 'university', universityId: staff.university_id };
+};
 
 export const buildApp = async (
   config: Config,
@@ -77,18 +168,28 @@ export const buildApp = async (
   const tickets = new TicketService(db, config.EMAIL_HASH_SALT);
   (app as { decorate: (k: string, v: unknown) => void }).decorate('db', db);
   const enrollment = new EnrollmentService(db, tickets, ledger);
+  const complaints = complaintLedger ?? new MockLedger(db, { publish });
+  const enrollmentProof = requireEnrollmentProof(complaints);
 
   await app.register(cors, {
     origin: config.WEB_ORIGIN,
     credentials: false,
   });
 
-  app.addContentTypeParser('text/plain', { parseAs: 'string' }, (_req, body, done) => {
-    done(null, body);
-  });
-  app.addContentTypeParser('text/csv', { parseAs: 'string' }, (_req, body, done) => {
-    done(null, body);
-  });
+  app.addContentTypeParser(
+    'text/plain',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      done(null, body);
+    },
+  );
+  app.addContentTypeParser(
+    'text/csv',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      done(null, body);
+    },
+  );
 
   app.addContentTypeParser(
     /^application\/octet-?stream/i,
@@ -99,8 +200,15 @@ export const buildApp = async (
   );
 
   app.addHook('onRequest', (request, reply, done) => {
-    if (request.method === 'POST' && request.url.split('?')[0] === '/api/blobs') {
-      if (!isOctetStreamContentType(baseContentType(request.headers['content-type']))) {
+    if (
+      request.method === 'POST' &&
+      request.url.split('?')[0] === '/api/blobs'
+    ) {
+      if (
+        !isOctetStreamContentType(
+          baseContentType(request.headers['content-type']),
+        )
+      ) {
         reply.code(415).send({ error: 'unsupported media type' });
         return;
       }
@@ -133,44 +241,59 @@ export const buildApp = async (
     }));
   });
 
-  app.get<{ Params: { id: string } }>('/api/universities/:id', (request, reply) => {
-    const university = getUniversity(db, request.params.id);
-    if (university === null) {
-      reply.code(404);
-      return { error: 'not found' };
-    }
-    return university;
-  });
+  app.get<{ Params: { id: string } }>(
+    '/api/universities/:id',
+    (request, reply) => {
+      const university = getUniversity(db, request.params.id);
+      if (university === null) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
+      return university;
+    },
+  );
 
-  app.post<{ Params: { id: string } }>('/api/university/:id/roster', (request, reply) => {
-    const university = getUniversity(db, request.params.id);
-    if (university === null) {
-      reply.code(404);
-      return { error: 'not found' };
-    }
+  app.post<{ Params: { id: string } }>(
+    '/api/university/:id/roster',
+    (request, reply) => {
+      const university = getUniversity(db, request.params.id);
+      if (university === null) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
 
-    let csvText = '';
-    const body = request.body;
-    if (typeof body === 'string') {
-      csvText = body;
-    } else if (body !== null && typeof body === 'object' && 'csv' in (body as Record<string, unknown>)) {
-      const csvValue = (body as Record<string, unknown>).csv;
-      csvText =
-        typeof csvValue === 'string'
-          ? csvValue
-          : csvValue === null || csvValue === undefined
-            ? ''
-            : JSON.stringify(csvValue);
-    }
+      let csvText = '';
+      const body = request.body;
+      if (typeof body === 'string') {
+        csvText = body;
+      } else if (
+        body !== null &&
+        typeof body === 'object' &&
+        'csv' in (body as Record<string, unknown>)
+      ) {
+        const csvValue = (body as Record<string, unknown>).csv;
+        csvText =
+          typeof csvValue === 'string'
+            ? csvValue
+            : csvValue === null || csvValue === undefined
+              ? ''
+              : JSON.stringify(csvValue);
+      }
 
-    try {
-      const result = importRoster(db, request.params.id, csvText, config.EMAIL_HASH_SALT);
-      return result;
-    } catch (error) {
-      reply.code(400);
-      return { error: (error as Error).message };
-    }
-  });
+      try {
+        const result = importRoster(
+          db,
+          request.params.id,
+          csvText,
+          config.EMAIL_HASH_SALT,
+        );
+        return result;
+      } catch (error) {
+        reply.code(400);
+        return { error: (error as Error).message };
+      }
+    },
+  );
 
   app.post('/api/otp/request', async (request, reply) => {
     const parsed = otpRequestSchema.safeParse(request.body);
@@ -193,7 +316,11 @@ export const buildApp = async (
       return { ok: false };
     }
 
-    const outcome = otp.verify(parsed.data.email, parsed.data.code, clientIp(request));
+    const outcome = otp.verify(
+      parsed.data.email,
+      parsed.data.code,
+      clientIp(request),
+    );
     if (outcome === 'rate_limited') {
       reply.code(429);
       return { error: 'too many requests' };
@@ -209,7 +336,7 @@ export const buildApp = async (
     return issued;
   });
 
-  app.post('/api/enroll', (request, reply) => {
+  app.post('/api/enroll', async (request, reply) => {
     const parsed = enrollSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400);
@@ -217,7 +344,10 @@ export const buildApp = async (
     }
 
     try {
-      return enrollment.enroll(parsed.data.ticket, parsed.data.commitment.toLowerCase());
+      return await enrollment.enroll(
+        parsed.data.ticket,
+        parsed.data.commitment.toLowerCase(),
+      );
     } catch (error) {
       if (error instanceof EnrollmentError) {
         reply.code(400);
@@ -276,21 +406,24 @@ export const buildApp = async (
     return { hash, size: bytes.length };
   });
 
-  app.get<{ Params: { hash: string } }>('/api/blobs/:hash', async (request, reply) => {
-    const hash = normalizeBlobHash(request.params.hash);
-    if (!isValidBlobHash(hash)) {
-      reply.code(400);
-      return { error: 'invalid hash' };
-    }
-    if (!blobExists(resolvedBlobDir, hash)) {
-      reply.code(404);
-      return { error: 'not found' };
-    }
+  app.get<{ Params: { hash: string } }>(
+    '/api/blobs/:hash',
+    async (request, reply) => {
+      const hash = normalizeBlobHash(request.params.hash);
+      if (!isValidBlobHash(hash)) {
+        reply.code(400);
+        return { error: 'invalid hash' };
+      }
+      if (!blobExists(resolvedBlobDir, hash)) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
 
-    reply.header('content-type', 'application/octet-stream');
-    reply.header('content-length', blobFileSize(resolvedBlobDir, hash));
-    return reply.send(createBlobReadStream(resolvedBlobDir, hash));
-  });
+      reply.header('content-type', 'application/octet-stream');
+      reply.header('content-length', blobFileSize(resolvedBlobDir, hash));
+      return reply.send(createBlobReadStream(resolvedBlobDir, hash));
+    },
+  );
 
   app.get('/api/auth/challenge', () => {
     const nonce = createChallenge();
@@ -325,7 +458,10 @@ export const buildApp = async (
 
   if (process.env.DEV_LOGIN === 'true') {
     app.post('/api/auth/dev-login', (request) => {
-      const body = (request.body ?? {}) as { role?: string; universityId?: string | null };
+      const body = (request.body ?? {}) as {
+        role?: string;
+        universityId?: string | null;
+      };
       const token = devLogin(db, {
         role: typeof body.role === 'string' ? body.role : undefined,
         universityId: body.universityId ?? null,
@@ -346,15 +482,50 @@ export const buildApp = async (
     return { staff };
   });
 
+  app.post(
+    '/api/complaints',
+    { preHandler: enrollmentProof },
+    async (request, reply) => {
+      const parsed = fileComplaintInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      try {
+        return await complaints.fileComplaint(parsed.data);
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/complaints/:id/support',
+    { preHandler: enrollmentProof },
+    async (request, reply) => {
+      const parsed = supportComplaintInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+      if (parsed.data.complaintId !== request.params.id) {
+        reply.code(400);
+        return { error: 'complaint id mismatch' };
+      }
+
+      try {
+        return await complaints.supportComplaint(parsed.data);
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
   app.post<{ Params: { id: string } }>(
     '/api/complaints/:id/status',
     { preHandler: requireStaff() },
     async (request, reply) => {
-      if (complaintLedger === undefined) {
-        reply.code(503);
-        return { error: 'complaint ledger not configured' };
-      }
-
       const parsed = complaintStatusSchema.safeParse(request.body);
       if (!parsed.success) {
         reply.code(400);
@@ -368,26 +539,165 @@ export const buildApp = async (
       }
 
       try {
-        return await complaintLedger.updateStatus({
+        if (staff.university_id !== null) {
+          await complaints.getComplaint({
+            viewerRole: 'university',
+            universityId: staff.university_id,
+            complaintId: request.params.id,
+          });
+        }
+        return await complaints.updateStatus({
           complaintId: request.params.id,
           newStatus: parsed.data.newStatus,
           outcomeHash: parsed.data.outcomeHash,
           ownerRole: staffOwnerRole(staff),
         });
       } catch (error) {
-        if (error instanceof LedgerAuthorizationError) {
-          reply.code(403);
-          return { error: 'forbidden' };
-        }
-        if (error instanceof Error && error.message === 'complaint not found') {
-          reply.code(404);
-          return { error: 'not found' };
-        }
-        if (error instanceof Error) {
-          reply.code(400);
-          return { error: error.message };
-        }
-        throw error;
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/complaints/:id/reopen',
+    { preHandler: requireStaff() },
+    async (request, reply) => {
+      const staff = request.staff;
+      if (staff === undefined) {
+        reply.code(401);
+        return { error: 'missing token' };
+      }
+      if (staffOwnerRole(staff) !== 'ugc') {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      try {
+        return await complaints.reopenComplaint({
+          complaintId: request.params.id,
+        });
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
+  app.get('/api/complaints', async (request, reply) => {
+    const parsedQuery = complaintListQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      reply.code(400);
+      return { error: 'invalid query' };
+    }
+    const viewer = resolveViewer(
+      db,
+      request,
+      parsedQuery.data.university,
+      reply,
+    );
+    if (viewer === null) {
+      return reply;
+    }
+
+    try {
+      return await complaints.listComplaints({
+        viewerRole: viewer.viewerRole,
+        universityId: viewer.universityId,
+        status: parsedQuery.data.status,
+        category: parsedQuery.data.category,
+        ownerRole: parsedQuery.data.ownerRole,
+        escalated: parsedQuery.data.escalated,
+      });
+    } catch (error) {
+      return ledgerErrorReply(reply, error);
+    }
+  });
+
+  app.get<{ Params: { id: string } }>(
+    '/api/complaints/:id',
+    async (request, reply) => {
+      const parsedQuery = universityQuerySchema.safeParse(request.query);
+      if (!parsedQuery.success) {
+        reply.code(400);
+        return { error: 'invalid query' };
+      }
+      const viewer = resolveViewer(
+        db,
+        request,
+        parsedQuery.data.university,
+        reply,
+      );
+      if (viewer === null) {
+        return reply;
+      }
+
+      try {
+        return await complaints.getComplaint({
+          viewerRole: viewer.viewerRole,
+          universityId: viewer.universityId,
+          complaintId: request.params.id,
+        });
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
+  app.get('/api/stats', async (request, reply) => {
+    const parsedQuery = universityQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      reply.code(400);
+      return { error: 'invalid query' };
+    }
+    const viewer = resolveViewer(
+      db,
+      request,
+      parsedQuery.data.university,
+      reply,
+    );
+    if (viewer === null) {
+      return reply;
+    }
+
+    try {
+      return await complaints.getStats({
+        viewerRole: viewer.viewerRole,
+        universityId: viewer.universityId,
+      });
+    } catch (error) {
+      return ledgerErrorReply(reply, error);
+    }
+  });
+
+  app.get<{ Params: { id: string } }>(
+    '/api/universities/:id/leaves',
+    async (request, reply) => {
+      if (getUniversity(db, request.params.id) === null) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
+      try {
+        return await complaints.getLeaves({
+          universityId: request.params.id,
+        });
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
+      }
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/api/universities/:id/roots',
+    async (request, reply) => {
+      if (getUniversity(db, request.params.id) === null) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
+      try {
+        return await complaints.getRoots({
+          universityId: request.params.id,
+        });
+      } catch (error) {
+        return ledgerErrorReply(reply, error);
       }
     },
   );

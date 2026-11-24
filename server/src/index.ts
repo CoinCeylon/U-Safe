@@ -2,21 +2,17 @@ import { MockLedger } from '@usafe/chain';
 import { loadConfig } from './config.js';
 import { buildApp } from './app.js';
 import { openDatabase } from './db/index.js';
-import { startEscalationJob, stopEscalationJob } from './services/escalation.js';
+import {
+  startEscalationJob,
+  stopEscalationJob,
+} from './services/escalation.js';
 import { publish } from './services/events.js';
 
 const main = async (): Promise<void> => {
   const config = loadConfig();
   const db = openDatabase(config.DATABASE_PATH, './migrations');
-  const complaintLedger = new MockLedger(db, { publish });
-  const app = await buildApp(
-    config,
-    db,
-    undefined,
-    undefined,
-    undefined,
-    complaintLedger,
-  );
+  const ledger = new MockLedger(db, { publish });
+  const app = await buildApp(config, db, undefined, ledger, undefined, ledger);
 
   const escalationHandle = startEscalationJob(db);
 
@@ -41,7 +37,10 @@ const main = async (): Promise<void> => {
   });
 
   await app.listen({ port: config.PORT, host: config.HOST });
-  app.log.info({ port: config.PORT, host: config.HOST, mode: config.CHAIN_MODE }, 'server started');
+  app.log.info(
+    { port: config.PORT, host: config.HOST, mode: config.CHAIN_MODE },
+    'server started',
+  );
 };
 
 main().catch((error: unknown) => {

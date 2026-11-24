@@ -58,3 +58,10 @@ Record package names, versions and adaptations here.
   itself below `MIN_GROUP_SIZE`, it is also null. Student and university scalar totals,
   overdue and staff-involved counts are protected the same way, while UGC viewers receive
   exact global totals and an exact `byUniversity` map plus bucketed breakdowns.
+- M047 treats an unauthenticated complaint/list/stats reader as a student, who must supply
+  `?university=`. A staff bearer token upgrades that viewer to the staff's university, or to
+  UGC when the staff row has no university. The same `MockLedger` instance now backs HTTP
+  enrollment and complaint routes. The reopen route is present but returns 501 until the
+  reopen behaviour is implemented in M079. `npm run demo:cli` drives `MockLedger` directly
+  against `DATABASE_PATH`, prints only non-sensitive demo output, and supports `--no-status`
+  so the escalation job can demonstrate a deadline breach.
