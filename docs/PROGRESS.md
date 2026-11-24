@@ -32,3 +32,4 @@ M031 | done | Added requireEnrollmentProof Fastify guard that requires a proof o
 M032 | done | Staff auth added with challenge, signature-based login, hashed sessions, requireStaff hook, and DEV_LOGIN dev-login route
 M033 | done | Added GET /api/events SSE hub with publish(event) broadcaster for id/type-only events
 M034 | done | Added privacy.test.ts scanning server source for forbidden logging patterns and verifying logger redaction
+M035 | done | Defined the LedgerAdapter interface and MembershipProof type in packages/chain with input/result types and zod schemas in packages/shared
