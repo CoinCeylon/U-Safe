@@ -34,3 +34,4 @@ M033 | done | Added GET /api/events SSE hub with publish(event) broadcaster for 
 M034 | done | Added privacy.test.ts scanning server source for forbidden logging patterns and verifying logger redaction
 M035 | done | Defined the LedgerAdapter interface and MembershipProof type in packages/chain with input/result types and zod schemas in packages/shared
 M036 | done | Added migration 003_mock_ledger.sql with ml_leaves, ml_roots, ml_complaints, ml_nullifiers, ml_history and ml_notes; verified it applies cleanly on a fresh database
+M037 | done | Implemented MockLedger (enrollCommitment with Merkle tree, ceiling enforcement and duplicate rejection; getLeaves; getRoots with 14-day grace window) in packages/chain, plus unit tests verifying 50 consistent enrollments and the 51st failing at ceiling 50
