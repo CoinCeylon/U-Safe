@@ -60,3 +60,5 @@ M055 | done | Complaint detail page with full description, status timeline, and 
 M056 | done | Anonymous support flow: unlock on demand, locally built mock proof, 2–12 s queued submission, optimistic count, quiet duplicate handling, and encrypted local support state
 
 M057 | done | File complaint form with 40–4000 character validation, category, urgency, staff-involved toggle, optional accused details, privacy guidance and filing slots
+
+M058 | done | Evidence attachment picker with up to 5 files, 25 MB each, previews, metadata stripping for images, metadata acknowledgement, and clear rejection messages

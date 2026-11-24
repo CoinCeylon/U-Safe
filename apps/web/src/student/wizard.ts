@@ -53,6 +53,10 @@ interface WizardState {
   enrollError: string | null;
 }
 
+// `rerender` is false for keystrokes. Rebuilding the step on every character
+// replaces the focused input and makes the student type one character at a time.
+type WizardChange = (next: Partial<WizardState>, rerender?: boolean) => void;
+
 const STORAGE_KEY = 'usafe-wizard-state';
 
 const DEFAULT_STATE: WizardState = {
@@ -198,7 +202,7 @@ function privacyNotice(): HTMLDivElement {
 function renderStep1(
   state: WizardState,
   universities: UniversityOption[],
-  onChange: (next: Partial<WizardState>) => void,
+  onChange: WizardChange,
 ): HTMLElement {
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-4';
@@ -226,10 +230,14 @@ function renderStep1(
   universityControl.addEventListener('change', () => {
     const selected = universities.find((u) => u.value === universityControl.value);
     if (selected) {
-      onChange({
-        universityId: selected.value,
-        universityName: selected.label,
-      });
+      onChange(
+        {
+          universityId: selected.value,
+          universityName: selected.label,
+        },
+        false,
+      );
+      validate();
     }
   });
   section.append(universitySelect);
@@ -243,7 +251,8 @@ function renderStep1(
   });
   const emailControl = emailInput.querySelector('input')!;
   emailControl.addEventListener('input', () => {
-    onChange({ email: emailControl.value });
+    // Update state without replacing this input so focus and caret survive.
+    onChange({ email: emailControl.value }, false);
   });
   section.append(emailInput);
 
@@ -269,10 +278,7 @@ function renderStep1(
 // Step 2: OTP request + verify -> ticket
 // ---------------------------------------------------------------------------
 
-function renderStep2(
-  state: WizardState,
-  onChange: (next: Partial<WizardState>) => void,
-): HTMLElement {
+function renderStep2(state: WizardState, onChange: WizardChange): HTMLElement {
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-4';
 
@@ -287,12 +293,12 @@ function renderStep2(
     'A 6-digit code has been sent to your email. Enter it to receive your enrolment ticket. The code expires after 10 minutes.';
   section.append(intro);
 
-  if (state.otpError !== null) {
-    const err = document.createElement('p');
-    err.className = 'text-xs text-danger';
-    err.textContent = state.otpError;
-    section.append(err);
-  }
+  const otpError = document.createElement('p');
+  otpError.id = 'wizard-otp-error';
+  otpError.className = 'text-xs text-danger';
+  otpError.textContent = state.otpError ?? '';
+  otpError.hidden = state.otpError === null;
+  section.append(otpError);
 
   const codeInput = input({
     id: 'wizard-code',
@@ -303,27 +309,25 @@ function renderStep2(
   });
   const codeControl = codeInput.querySelector('input')!;
   codeControl.inputMode = 'numeric';
-  codeControl.addEventListener('input', () => {
-    const value = codeControl.value.replace(/\D/g, '').slice(0, 6);
-    codeControl.value = value;
-    onChange({ code: value });
-  });
   section.append(codeInput);
 
   const buttonRow = document.createElement('div');
   buttonRow.className = 'flex flex-col sm:flex-row gap-3';
 
   const handleVerify = async (): Promise<void> => {
-    onChange({ otpError: null, enrollStatus: 'idle' });
+    onChange({ otpError: null, enrollStatus: 'idle' }, false);
+    otpError.hidden = true;
+    otpError.textContent = '';
     try {
       const ticket: OtpTicket = await verifyOtp(state.email, state.code);
       onChange({ ticket: ticket.ticket });
       toast('Enrolment ticket received.', 'success');
     } catch (error) {
-      onChange({
-        otpError:
-          error instanceof Error ? error.message : 'Verification failed.',
-      });
+      const message =
+        error instanceof Error ? error.message : 'Verification failed.';
+      onChange({ otpError: message }, false);
+      otpError.textContent = message;
+      otpError.hidden = false;
     }
   };
   const verify = button({
@@ -336,17 +340,29 @@ function renderStep2(
   });
   buttonRow.append(verify);
 
+  // Keep the code input mounted while updating the dependent button.
+  codeControl.addEventListener('input', () => {
+    const value = codeControl.value.replace(/\D/g, '').slice(0, 6);
+    codeControl.value = value;
+    onChange({ code: value }, false);
+    verify.disabled = !isValidCode(value) || state.ticket !== null;
+  });
+
   const handleResend = async (): Promise<void> => {
-    onChange({ otpError: null, ticket: null, otpRequested: false });
+    onChange({ otpError: null, ticket: null, otpRequested: false }, false);
+    otpError.hidden = true;
+    otpError.textContent = '';
     try {
       await requestOtp(state.email);
-      onChange({ otpRequested: true });
+      onChange({ otpRequested: true }, false);
       toast('A new code has been sent.', 'info');
+      verify.disabled = !isValidCode(state.code) || state.ticket !== null;
     } catch (error) {
-      onChange({
-        otpError:
-          error instanceof Error ? error.message : 'Could not resend code.',
-      });
+      const message =
+        error instanceof Error ? error.message : 'Could not resend code.';
+      onChange({ otpError: message }, false);
+      otpError.textContent = message;
+      otpError.hidden = false;
     }
   };
   const resend = button({
@@ -366,10 +382,7 @@ function renderStep2(
 // Step 3: connect wallet
 // ---------------------------------------------------------------------------
 
-function renderStep3(
-  state: WizardState,
-  onChange: (next: Partial<WizardState>) => void,
-): HTMLElement {
+function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-4';
 
@@ -453,10 +466,7 @@ const STATUS_LABELS: Record<WizardState['enrollStatus'], string> = {
   idle: 'Ready to enrol.',
 };
 
-function renderStep4(
-  state: WizardState,
-  onChange: (next: Partial<WizardState>) => void,
-): HTMLElement {
+function renderStep4(state: WizardState, onChange: WizardChange): HTMLElement {
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-4';
 
@@ -659,29 +669,43 @@ export function renderWizard(
     }
   }
 
-  function onChange(next: Partial<WizardState>): void {
+  function updateNav(): void {
+    backBtn.disabled = state.step <= 1;
+    nextBtn.disabled = !isValid(state);
+    nextBtn.textContent = state.step === 4 ? 'Finish' : 'Next';
+  }
+
+  function onChange(next: Partial<WizardState>, rerender = true): void {
     Object.assign(state, next);
     persist(state);
-    renderStep();
+    // Navigation validity must follow keystrokes even when the step DOM stays
+    // mounted. Only step/status changes need a full rebuild.
+    updateNav();
+    if (rerender) {
+      renderStep();
+    }
   }
 
   function renderStep(): void {
     stepOutlet.replaceChildren();
     const stepEl = stepRenderers[state.step](state);
     stepOutlet.append(stepEl);
-    backBtn.disabled = state.step <= 1;
-    nextBtn.disabled = !isValid(state);
-    nextBtn.textContent = state.step === 4 ? 'Finish' : 'Next';
+    updateNav();
 
-    // Kick off the OTP request when step 2 first becomes visible.
+    // Kick off the OTP request when step 2 first becomes visible. Its result
+    // updates state in place so the code field is never rebuilt mid-typing.
     if (state.step === 2 && state.email && !state.otpRequested) {
       void requestOtp(state.email).then(
-        () => onChange({ otpRequested: true }),
+        () => onChange({ otpRequested: true }, false),
         (error) => {
-          onChange({
-            otpError:
-              error instanceof Error ? error.message : 'Could not send code.',
-          });
+          const message =
+            error instanceof Error ? error.message : 'Could not send code.';
+          onChange({ otpError: message }, false);
+          const errorEl = stepOutlet.querySelector<HTMLElement>('#wizard-otp-error');
+          if (errorEl) {
+            errorEl.textContent = message;
+            errorEl.hidden = false;
+          }
         },
       );
     }

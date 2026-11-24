@@ -117,3 +117,11 @@ Record package names, versions and adaptations here.
   version (not a hard-coded version 1); when another store already exists at that
   version, `openDb` upgrades once so enrolment and supported-id stores can share one
   database without a `VersionError`.
+- M058 calls `stripImage` on images when they are added to the form. If the image is
+  corrupt or canvas re-encoding fails, the original file is kept and the file is treated
+  like a video/document: the metadata acknowledgement checkbox becomes required. A
+  failed strip must not break the form or silently claim that metadata was removed.
+- The enrolment wizard updates state in place on `input` events (`onChange(next, false)`)
+  instead of rebuilding the step DOM. Rebuilding on every keystroke replaced the
+  focused field and made students type only one character at a time. Navigation
+  validity is refreshed separately; full re-renders remain only for step/status changes.
