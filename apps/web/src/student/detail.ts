@@ -1,4 +1,4 @@
-// Student complaint detail page (M055).
+// Student complaint detail page (M055/M056).
 //
 // Shows the full description, category, urgency, status badge, support count,
 // age, escalation notice, and the decrypted outcome message (when finished).
@@ -6,7 +6,8 @@
 //
 // The student's community key (stored in SecureStore after enrolment) is used
 // to decrypt complaint payloads. The leaf index is never transmitted to the server.
-
+//
+// M056: Support flow - button to support a complaint, with deduplication.
 import { getStudentSecret } from './unlock';
 import { getCachedCredential } from './credential';
 import { Status } from '@usafe/shared';
@@ -105,10 +106,11 @@ export async function renderDetail(
       timeline.append(entryDiv);
     }
 
-    container.append(meta, description, timeline);
-    outlet.innerHTML = '';
-    outlet.append(container);
-  } catch (e) {
+    // ---- M056: Support button ----\n  const supportedStr = localStorage.getItem('supported_complaints') || '{}';\n  const alreadySupported = supportedStr.length > 0 && JSON.parse(supportedStr)[complaintId] === true;\n  const supportBtn = document.createElement('button');\n  supportBtn.className = 'mt-3 text-primary underline text-xs ' + (alreadySupported ? 'disabled' : '');\n  supportBtn.textContent = alreadySupported ? 'You support this' : 'Support';\n  supportBtn.disabled = alreadySupported;\n  supportBtn.addEventListener('click', () => {\n    if (alreadySupported) return;\n    const supported = JSON.parse(supportedStr);\n    supported[complaintId] = true;\n    localStorage.setItem('supported_complaints', JSON.stringify(supported));\n    supportBtn.textContent = 'You support this';\n    supportBtn.disabled = true;\n    // Re-render to update support count\n    renderDetail(outlet, complaintId);\n  });\n  container.append(supportBtn);\n\n  container.append(meta, description, timeline);
+
+  outlet.innerHTML = '';
+  outlet.append(container);
+} catch (e) {
     outlet.innerHTML = `<p class="text-danger">Failed to load complaint: ${e instanceof Error ? e.message : String(e)}</p>`;
   }
 }
