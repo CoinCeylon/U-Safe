@@ -69,3 +69,8 @@ Record package names, versions and adaptations here.
   files through HTTP, reuses one support proof, expects the second request to fail, and
   confirms the final count stays at 1. The demo CLI uses the leaf indexes returned by
   `enrollCommitment`, so it also works when a university already has earlier enrollments.
+- M049 persists non-sensitive onboarding progress (step, university, email) in
+  `sessionStorage` so the wizard resumes after a refresh. `SecureStore` is not used yet
+  because it requires the student secret, which is derived in M051. Once the secret is
+  available, the persisted progress moves into `SecureStore` (encrypted with the secret).
+  Sensitive values (OTP code, wallet signature, student secret) are never persisted.

@@ -1,6 +1,12 @@
 import '../styles/app.css';
 import { createFrame } from '../ui/frame';
 import { createRouter } from '../lib/router';
+import { fetchUniversities, renderWizard } from './wizard';
+
+// Universities are resolved before the router starts so the onboarding wizard
+// can render synchronously. fetchUniversities falls back to a demo list when
+// the server is unavailable, so this never rejects.
+const universities = await fetchUniversities();
 
 const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) {
@@ -12,35 +18,19 @@ const portalFrame = createFrame({
   roleBadge: 'student',
   navItems: [
     { label: 'Home', path: '/' },
-    { label: 'Second', path: '/second' },
   ],
 });
 
 root.append(portalFrame.element);
 
 const router = createRouter(portalFrame.content);
+
 router.register('/', () => {
   const section = document.createElement('section');
-  section.className = 'flex flex-col gap-2';
-  const heading = document.createElement('h2');
-  heading.className = 'text-xl font-semibold text-slate-900';
-  heading.textContent = 'Home';
-  const text = document.createElement('p');
-  text.className = 'text-sm text-slate-600';
-  text.textContent = 'Student home placeholder.';
-  section.append(heading, text);
+  section.className = 'flex flex-col gap-4 max-w-md mx-auto py-4';
+  const wizard = renderWizard(section, universities);
+  section.append(wizard.element);
   return section;
 });
-router.register('/second', () => {
-  const section = document.createElement('section');
-  section.className = 'flex flex-col gap-2';
-  const heading = document.createElement('h2');
-  heading.className = 'text-xl font-semibold text-slate-900';
-  heading.textContent = 'Second';
-  const text = document.createElement('p');
-  text.className = 'text-sm text-slate-600';
-  text.textContent = 'Student second placeholder.';
-  section.append(heading, text);
-  return section;
-});
+
 router.start();
