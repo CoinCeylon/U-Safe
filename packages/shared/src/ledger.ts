@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type {
   Category,
+  ComplaintListItem,
   ComplaintRecord,
   HistoryEntry,
   OwnerRole,
@@ -279,7 +280,8 @@ export const reopenComplaintResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface ListComplaintsFilter {
-  universityId?: string;
+  viewerRole: 'student' | 'university' | 'ugc';
+  universityId: string;
   status?: Status;
   category?: Category;
   ownerRole?: OwnerRole;
@@ -287,12 +289,13 @@ export interface ListComplaintsFilter {
 }
 
 export interface ListComplaintsResult {
-  complaints: ComplaintRecord[];
+  complaints: ComplaintListItem[];
 }
 
 export const listComplaintsFilterSchema = z
   .object({
-    universityId: z.string().min(1).optional(),
+    viewerRole: z.enum(['student', 'university', 'ugc']),
+    universityId: z.string().min(1),
     status: z.enum(['not_started', 'pending_investigation', 'finished']).optional(),
     category: z
       .enum(['verbal', 'physical', 'sexual', 'cyber', 'financial', 'other'])
@@ -302,33 +305,53 @@ export const listComplaintsFilterSchema = z
   })
   .strict() satisfies z.ZodType<ListComplaintsFilter>;
 
+const complaintRecordResultSchema = z.object({
+  id: z.string().min(1),
+  universityId: z.string().min(1),
+  category: z.enum([
+    'verbal',
+    'physical',
+    'sexual',
+    'cyber',
+    'financial',
+    'other',
+  ]),
+  urgency: z.enum(['normal', 'urgent']),
+  staffInvolved: z.boolean(),
+  ownerRole: z.enum(['university', 'ugc']),
+  payloadHash: z.string().min(1),
+  createdAt: z.string().datetime(),
+  deadlineAt: z.string().datetime(),
+  status: z.enum(['not_started', 'pending_investigation', 'finished']),
+  escalated: z.boolean(),
+  reopened: z.boolean(),
+  supportCount: z.number().int().nonnegative(),
+  outcomeHash: z.string().nullable(),
+  lastUpdatedAt: z.string().datetime(),
+});
+
+const redactedComplaintRecordResultSchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  category: z.enum([
+    'verbal',
+    'physical',
+    'sexual',
+    'cyber',
+    'financial',
+    'other',
+  ]),
+  supportCount: z.number().int().nonnegative(),
+  status: z.enum(['not_started', 'pending_investigation', 'finished']),
+});
+
 export const listComplaintsResultSchema = z
   .object({
     complaints: z.array(
-      z.object({
-        id: z.string().min(1),
-        universityId: z.string().min(1),
-        category: z.enum([
-          'verbal',
-          'physical',
-          'sexual',
-          'cyber',
-          'financial',
-          'other',
-        ]),
-        urgency: z.enum(['normal', 'urgent']),
-        staffInvolved: z.boolean(),
-        ownerRole: z.enum(['university', 'ugc']),
-        payloadHash: z.string().min(1),
-        createdAt: z.string().datetime(),
-        deadlineAt: z.string().datetime(),
-        status: z.enum(['not_started', 'pending_investigation', 'finished']),
-        escalated: z.boolean(),
-        reopened: z.boolean(),
-        supportCount: z.number().int().nonnegative(),
-        outcomeHash: z.string().nullable(),
-        lastUpdatedAt: z.string().datetime(),
-      }),
+      z.union([
+        complaintRecordResultSchema,
+        redactedComplaintRecordResultSchema,
+      ]),
     ),
   })
   .strict() satisfies z.ZodType<ListComplaintsResult>;

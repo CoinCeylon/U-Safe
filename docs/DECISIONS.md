@@ -32,3 +32,9 @@ Record package names, versions and adaptations here.
   SHA-256 as `@usafe/crypto`, so its paths verify with `MerkleTree.verify`. `communityKeyWrapped`
   currently returns `community_key_wrapped_for_ugc` as the only stored wrapped copy;
   M065 will replace this with the student-delivery wrapping.
+- M043 overlaps M045 and M047: it adds only the university list path needed to redact
+  staff-involved complaints and the status route needed for its HTTP 403 acceptance
+  test. Student and UGC queries, the remaining complaint routes, and the CLI remain in
+  M045 and M047. Staff ownership is derived from `staff.university_id`: a null
+  university identifies UGC staff, while a non-null university identifies university
+  staff. UGC-only payload sealing remains deferred to the portal work in M060.

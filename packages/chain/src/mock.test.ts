@@ -341,11 +341,99 @@ describe('MockLedger (M037)', () => {
 
     // Verify the stored record has owner_role = 'ugc'.
     const row = db
-      .prepare(`SELECT owner_role, status, support_count FROM ml_complaints WHERE id = ?`)
-      .get(result.id) as { owner_role: string; status: string; support_count: number };
+      .prepare(
+        `SELECT owner_role, staff_involved, status, support_count
+         FROM ml_complaints WHERE id = ?`,
+      )
+      .get(result.id) as {
+      owner_role: string;
+      staff_involved: number;
+      status: string;
+      support_count: number;
+    };
     expect(row.owner_role).toBe('ugc');
+    expect(row.staff_involved).toBe(1);
     expect(row.status).toBe('not_started');
     expect(row.support_count).toBe(0);
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('redacts staff-involved complaints in the university list', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const insert = db.prepare(`
+      INSERT INTO ml_complaints (
+        id, university_id, category, urgency, staff_involved, owner_role,
+        payload_hash, payload_locator, created_at, deadline_at, status,
+        escalated, reopened, support_count, outcome_hash, last_updated_at
+      ) VALUES (?, 'uni-1', ?, 'normal', ?, ?, ?, NULL, ?, ?, 'not_started', 0, 0, ?, NULL, ?)
+    `);
+    insert.run(
+      'c-staff',
+      'sexual',
+      1,
+      'ugc',
+      'payload-hash',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-08T00:00:00.000Z',
+      4,
+      '2026-01-01T00:00:00.000Z',
+    );
+    insert.run(
+      'c-normal',
+      'verbal',
+      0,
+      'university',
+      'other-payload-hash',
+      '2026-01-02T00:00:00.000Z',
+      '2026-01-09T00:00:00.000Z',
+      2,
+      '2026-01-02T00:00:00.000Z',
+    );
+
+    const result = await ledger.listComplaints({
+      viewerRole: 'university',
+      universityId: 'uni-1',
+    });
+
+    expect(result.complaints).toHaveLength(2);
+    expect(result.complaints[0]).toEqual({
+      id: 'c-normal',
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      ownerRole: 'university',
+      payloadHash: 'other-payload-hash',
+      createdAt: '2026-01-02T00:00:00.000Z',
+      deadlineAt: '2026-01-09T00:00:00.000Z',
+      status: 'not_started',
+      escalated: false,
+      reopened: false,
+      supportCount: 2,
+      outcomeHash: null,
+      lastUpdatedAt: '2026-01-02T00:00:00.000Z',
+    });
+    expect(result.complaints[1]).toEqual({
+      id: 'c-staff',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      category: 'sexual',
+      supportCount: 4,
+      status: 'not_started',
+    });
+    expect(Object.keys(result.complaints[1]!)).toEqual([
+      'id',
+      'createdAt',
+      'category',
+      'supportCount',
+      'status',
+    ]);
 
     db.close();
     rmSync(dir, { recursive: true, force: true });

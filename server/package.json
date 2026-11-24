@@ -16,6 +16,7 @@
   "dependencies": {
     "@fastify/cors": "^11.4.3",
     "@types/nodemailer": "^8.0.2",
+    "@usafe/chain": "0.0.0",
     "@usafe/crypto": "0.0.0",
     "@usafe/shared": "0.0.0",
     "better-sqlite3": "^12.11.1",

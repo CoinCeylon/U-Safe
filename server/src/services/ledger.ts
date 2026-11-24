@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import type {
+  UpdateStatusInput,
+  UpdateStatusResult,
+} from '@usafe/shared';
 import { MERKLE_TREE_DEPTH } from '@usafe/shared';
 
 export interface EnrollmentReceipt {
@@ -10,6 +14,10 @@ export interface EnrollmentReceipt {
 export interface EnrollmentLedger {
   enrollCommitment(universityId: string, commitment: string): EnrollmentReceipt;
   verifyEnrollmentProof?(proof: unknown): boolean | Promise<boolean>;
+}
+
+export interface ComplaintLedger {
+  updateStatus(input: UpdateStatusInput): Promise<UpdateStatusResult>;
 }
 
 const DOMAIN_TAG_MERKLE_INNER = 'merkle-inner';

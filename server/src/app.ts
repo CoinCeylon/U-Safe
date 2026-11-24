@@ -1,5 +1,6 @@
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import { LedgerAuthorizationError } from '@usafe/chain';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { Config } from './config.js';
@@ -9,7 +10,11 @@ import { createMailer, type Mailer } from './services/mailer.js';
 import { OtpService } from './services/otp.js';
 import { TicketService } from './services/tickets.js';
 import { EnrollmentError, EnrollmentService } from './services/enrollment.js';
-import { StubLedger, type EnrollmentLedger } from './services/ledger.js';
+import {
+  StubLedger,
+  type ComplaintLedger,
+  type EnrollmentLedger,
+} from './services/ledger.js';
 import { clientIp } from './services/clientIp.js';
 import { addClient, publish, removeClient } from './services/events.js';
 import {
@@ -17,6 +22,7 @@ import {
   devLogin,
   loginWithSignature,
   requireStaff,
+  staffOwnerRole,
 } from './services/staffAuth.js';
 import {
   MAX_BLOB_SIZE,
@@ -38,6 +44,10 @@ const enrollSchema = z.object({
   ticket: z.string().min(1),
   commitment: z.string().regex(/^[0-9a-fA-F]{64}$/),
 });
+const complaintStatusSchema = z.object({
+  newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
+  outcomeHash: z.string().min(1).nullable().default(null),
+});
 
 export const buildApp = async (
   config: Config,
@@ -45,6 +55,7 @@ export const buildApp = async (
   mailerOrBlobDir?: Mailer | string,
   ledger: EnrollmentLedger = new StubLedger(),
   blobDir?: string,
+  complaintLedger?: ComplaintLedger,
 ): Promise<FastifyInstance> => {
   let mailer: Mailer = createMailer(config);
   let resolvedBlobDir = resolveBlobDir(blobDir);
@@ -334,6 +345,52 @@ export const buildApp = async (
     const staff = verifySession(db, token);
     return { staff };
   });
+
+  app.post<{ Params: { id: string } }>(
+    '/api/complaints/:id/status',
+    { preHandler: requireStaff() },
+    async (request, reply) => {
+      if (complaintLedger === undefined) {
+        reply.code(503);
+        return { error: 'complaint ledger not configured' };
+      }
+
+      const parsed = complaintStatusSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      const staff = request.staff;
+      if (staff === undefined) {
+        reply.code(401);
+        return { error: 'missing token' };
+      }
+
+      try {
+        return await complaintLedger.updateStatus({
+          complaintId: request.params.id,
+          newStatus: parsed.data.newStatus,
+          outcomeHash: parsed.data.outcomeHash,
+          ownerRole: staffOwnerRole(staff),
+        });
+      } catch (error) {
+        if (error instanceof LedgerAuthorizationError) {
+          reply.code(403);
+          return { error: 'forbidden' };
+        }
+        if (error instanceof Error && error.message === 'complaint not found') {
+          reply.code(404);
+          return { error: 'not found' };
+        }
+        if (error instanceof Error) {
+          reply.code(400);
+          return { error: error.message };
+        }
+        throw error;
+      }
+    },
+  );
 
   app.get('/api/events', (request, reply) => {
     reply.hijack();

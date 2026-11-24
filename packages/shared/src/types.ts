@@ -26,6 +26,16 @@ export interface ComplaintRecord {
   lastUpdatedAt: string;
 }
 
+export interface RedactedComplaintRecord {
+  id: string;
+  createdAt: string;
+  category: Category;
+  supportCount: number;
+  status: Status;
+}
+
+export type ComplaintListItem = ComplaintRecord | RedactedComplaintRecord;
+
 export interface UniversityRecord {
   id: string;
   name: string;

@@ -14,6 +14,9 @@ import {
   URGENT_DEADLINE_SECONDS,
 } from '@usafe/shared';
 import type {
+  Category,
+  ComplaintListItem,
+  ComplaintRecord,
   EnrollCommitmentInput,
   EnrollCommitmentResult,
   FileComplaintInput,
@@ -22,15 +25,20 @@ import type {
   GetLeavesResult,
   GetRootsInput,
   GetRootsResult,
+  ListComplaintsFilter,
+  ListComplaintsResult,
   MarkEscalatedInput,
   MarkEscalatedResult,
   MembershipProof,
+  OwnerRole,
+  Status,
   SupportComplaintInput,
   SupportComplaintResult,
+  Urgency,
   UpdateStatusInput,
   UpdateStatusResult,
 } from '@usafe/shared';
-import { LedgerAdapter } from './ledger.js';
+import { LedgerAdapter, LedgerAuthorizationError } from './ledger.js';
 
 const GRACE_WINDOW_DAYS = 14;
 
@@ -39,6 +47,24 @@ const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
 type TreeEntry = {
   tree: MerkleTree;
   leafCount: number;
+};
+
+type ComplaintRow = {
+  id: string;
+  university_id: string;
+  category: string;
+  urgency: string;
+  staff_involved: number;
+  owner_role: string;
+  payload_hash: string;
+  created_at: string;
+  deadline_at: string;
+  status: string;
+  escalated: number;
+  reopened: number;
+  support_count: number;
+  outcome_hash: string | null;
+  last_updated_at: string;
 };
 
 /**
@@ -401,7 +427,9 @@ export class MockLedger implements LedgerAdapter {
     //    match the complaint's stored owner_role, so a university cannot
     //    touch a UGC-owned complaint and vice versa.
     if (input.ownerRole !== complaint.owner_role) {
-      throw new Error('insufficient role to update this complaint');
+      throw new LedgerAuthorizationError(
+        'insufficient role to update this complaint',
+      );
     }
 
     // 3. Transitions only go forward.
@@ -505,8 +533,78 @@ export class MockLedger implements LedgerAdapter {
   reopenComplaint(): Promise<import('@usafe/shared').ReopenComplaintResult> {
     throw new Error('reopenComplaint is not yet implemented (M043)');
   }
-  listComplaints(): Promise<import('@usafe/shared').ListComplaintsResult> {
-    throw new Error('listComplaints is not yet implemented (M045)');
+  listComplaints(
+    filter: ListComplaintsFilter,
+  ): Promise<ListComplaintsResult> {
+    if (filter.viewerRole !== 'university') {
+      return Promise.reject(
+        new Error('listComplaints supports university viewers only'),
+      );
+    }
+
+    const clauses = ['university_id = ?'];
+    const parameters: Array<string | number> = [filter.universityId];
+
+    if (filter.status !== undefined) {
+      clauses.push('status = ?');
+      parameters.push(filter.status);
+    }
+    if (filter.category !== undefined) {
+      clauses.push('category = ?');
+      parameters.push(filter.category);
+    }
+    if (filter.ownerRole !== undefined) {
+      clauses.push('owner_role = ?');
+      parameters.push(filter.ownerRole);
+    }
+    if (filter.escalated !== undefined) {
+      clauses.push('escalated = ?');
+      parameters.push(filter.escalated ? 1 : 0);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, university_id, category, urgency, staff_involved, owner_role,
+                payload_hash, created_at, deadline_at, status, escalated, reopened,
+                support_count, outcome_hash, last_updated_at
+         FROM ml_complaints
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(...parameters) as ComplaintRow[];
+
+    const complaints: ComplaintListItem[] = rows.map((row) => {
+      if (filter.viewerRole === 'university' && row.staff_involved === 1) {
+        return {
+          id: row.id,
+          createdAt: row.created_at,
+          category: row.category as Category,
+          supportCount: row.support_count,
+          status: row.status as Status,
+        };
+      }
+
+      const complaint: ComplaintRecord = {
+        id: row.id,
+        universityId: row.university_id,
+        category: row.category as Category,
+        urgency: row.urgency as Urgency,
+        staffInvolved: row.staff_involved === 1,
+        ownerRole: row.owner_role as OwnerRole,
+        payloadHash: row.payload_hash,
+        createdAt: row.created_at,
+        deadlineAt: row.deadline_at,
+        status: row.status as Status,
+        escalated: row.escalated === 1,
+        reopened: row.reopened === 1,
+        supportCount: row.support_count,
+        outcomeHash: row.outcome_hash,
+        lastUpdatedAt: row.last_updated_at,
+      };
+      return complaint;
+    });
+
+    return Promise.resolve({ complaints });
   }
   getComplaint(): Promise<import('@usafe/shared').GetComplaintResult> {
     throw new Error('getComplaint is not yet implemented (M045)');
