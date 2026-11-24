@@ -6,7 +6,8 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "server"
+    "server",
+    "scripts"
   ],
   "engines": {
     "node": ">=20"
@@ -19,6 +20,7 @@
     "test": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; vitest run'",
     "check": "bash -c 'if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; nvm use 20 >/dev/null 2>&1 || true; fi; npm run typecheck && npm run lint && npm run test'",
     "seed": "npm run seed -w server",
+    "seed:keys": "tsx scripts/seed-keys.ts",
     "seed:roster": "npm run seed:roster -w server",
     "mail:test": "npm run mail:test -w server",
     "try:otp": "npm run try:otp -w server",

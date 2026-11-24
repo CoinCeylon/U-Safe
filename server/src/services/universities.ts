@@ -7,6 +7,7 @@ export interface University {
   enrollment_ceiling: number;
   public_key_jwk: string | null;
   community_key_wrapped_for_ugc: string | null;
+  community_key_wrapped_for_delivery: string | null;
   status: string;
 }
 
@@ -17,6 +18,7 @@ export interface CreateUniversityInput {
   enrollment_ceiling?: number;
   public_key_jwk?: string | null;
   community_key_wrapped_for_ugc?: string | null;
+  community_key_wrapped_for_delivery?: string | null;
   status?: string;
 }
 
@@ -34,6 +36,10 @@ const rowToUniversity = (row: Record<string, unknown>): University => ({
   public_key_jwk: row.public_key_jwk == null ? null : asString(row.public_key_jwk),
   community_key_wrapped_for_ugc:
     row.community_key_wrapped_for_ugc == null ? null : asString(row.community_key_wrapped_for_ugc),
+  community_key_wrapped_for_delivery:
+    row.community_key_wrapped_for_delivery == null
+      ? null
+      : asString(row.community_key_wrapped_for_delivery),
   status: asString(row.status),
 });
 
@@ -48,13 +54,15 @@ export const createUniversity = (
     enrollment_ceiling: input.enrollment_ceiling ?? 0,
     public_key_jwk: input.public_key_jwk ?? null,
     community_key_wrapped_for_ugc: input.community_key_wrapped_for_ugc ?? null,
+    community_key_wrapped_for_delivery: input.community_key_wrapped_for_delivery ?? null,
     status: input.status ?? 'active',
   };
 
   db.prepare(
     `INSERT INTO universities
-      (id, name, domain, enrollment_ceiling, public_key_jwk, community_key_wrapped_for_ugc, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+      (id, name, domain, enrollment_ceiling, public_key_jwk,
+       community_key_wrapped_for_ugc, community_key_wrapped_for_delivery, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
   ).run(
     university.id,
@@ -63,6 +71,7 @@ export const createUniversity = (
     university.enrollment_ceiling,
     university.public_key_jwk,
     university.community_key_wrapped_for_ugc,
+    university.community_key_wrapped_for_delivery,
     university.status,
   );
 

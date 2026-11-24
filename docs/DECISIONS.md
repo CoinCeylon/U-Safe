@@ -38,3 +38,10 @@ Record package names, versions and adaptations here.
   M045 and M047. Staff ownership is derived from `staff.university_id`: a null
   university identifies UGC staff, while a non-null university identifies university
   staff. UGC-only payload sealing remains deferred to the portal work in M060.
+- M044 stores the UGC demo public key on a single `staff` row (`role='ugc'`,
+  `address='ugc-demo-officer'`, null university) and university public keys in
+  `universities.public_key_jwk`. The student-delivery copy of each community key is
+  stored in the new `universities.community_key_wrapped_for_delivery` column as a
+  `SecureStore` backup encrypted with `COMMUNITY_DELIVERY_SECRET`. Existing
+  passphrase-protected `.dev-keys` backups are reused, so a second seed run neither
+  duplicates rows nor rotates complete demo key sets.
