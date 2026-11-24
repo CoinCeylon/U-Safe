@@ -80,6 +80,29 @@ const newDb = (): { db: Database.Database; dir: string } => {
 
 const commitment = (): string => randomBytes(32).toString('hex');
 
+const insertStatsComplaint = (
+  db: Database.Database,
+  id: string,
+  universityId: string,
+  category: string,
+): void => {
+  db.prepare(`
+    INSERT INTO ml_complaints (
+      id, university_id, category, urgency, staff_involved, owner_role,
+      payload_hash, payload_locator, created_at, deadline_at, status,
+      escalated, reopened, support_count, outcome_hash, last_updated_at
+    ) VALUES (?, ?, ?, 'normal', 0, 'university', ?, NULL, ?, ?, 'not_started', 0, 0, 0, NULL, ?)
+  `).run(
+    id,
+    universityId,
+    category,
+    `payload-${id}`,
+    '2026-03-01T00:00:00.000Z',
+    '2027-01-01T00:00:00.000Z',
+    '2026-03-01T00:00:00.000Z',
+  );
+};
+
 // Verifies a returned membership proof recomputes to the reported root.
 const verifyProof = async (
   commitmentHex: string,
@@ -341,11 +364,411 @@ describe('MockLedger (M037)', () => {
 
     // Verify the stored record has owner_role = 'ugc'.
     const row = db
-      .prepare(`SELECT owner_role, status, support_count FROM ml_complaints WHERE id = ?`)
-      .get(result.id) as { owner_role: string; status: string; support_count: number };
+      .prepare(
+        `SELECT owner_role, staff_involved, status, support_count
+         FROM ml_complaints WHERE id = ?`,
+      )
+      .get(result.id) as {
+      owner_role: string;
+      staff_involved: number;
+      status: string;
+      support_count: number;
+    };
     expect(row.owner_role).toBe('ugc');
+    expect(row.staff_involved).toBe(1);
     expect(row.status).toBe('not_started');
     expect(row.support_count).toBe(0);
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('redacts staff-involved complaints in the university list', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const insert = db.prepare(`
+      INSERT INTO ml_complaints (
+        id, university_id, category, urgency, staff_involved, owner_role,
+        payload_hash, payload_locator, created_at, deadline_at, status,
+        escalated, reopened, support_count, outcome_hash, last_updated_at
+      ) VALUES (?, 'uni-1', ?, 'normal', ?, ?, ?, NULL, ?, ?, 'not_started', 0, 0, ?, NULL, ?)
+    `);
+    insert.run(
+      'c-staff',
+      'sexual',
+      1,
+      'ugc',
+      'payload-hash',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-08T00:00:00.000Z',
+      4,
+      '2026-01-01T00:00:00.000Z',
+    );
+    insert.run(
+      'c-normal',
+      'verbal',
+      0,
+      'university',
+      'other-payload-hash',
+      '2026-01-02T00:00:00.000Z',
+      '2026-01-09T00:00:00.000Z',
+      2,
+      '2026-01-02T00:00:00.000Z',
+    );
+
+    const result = await ledger.listComplaints({
+      viewerRole: 'university',
+      universityId: 'uni-1',
+    });
+
+    expect(result.complaints).toHaveLength(2);
+    expect(result.complaints[0]).toEqual({
+      id: 'c-normal',
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      ownerRole: 'university',
+      payloadHash: 'other-payload-hash',
+      createdAt: '2026-01-02T00:00:00.000Z',
+      deadlineAt: '2026-01-09T00:00:00.000Z',
+      status: 'not_started',
+      escalated: false,
+      reopened: false,
+      supportCount: 2,
+      outcomeHash: null,
+      lastUpdatedAt: '2026-01-02T00:00:00.000Z',
+    });
+    expect(result.complaints[1]).toEqual({
+      id: 'c-staff',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      category: 'sexual',
+      supportCount: 4,
+      status: 'not_started',
+    });
+    expect(Object.keys(result.complaints[1]!)).toEqual([
+      'id',
+      'createdAt',
+      'category',
+      'supportCount',
+      'status',
+    ]);
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('filters list, detail, history and stats by viewer role', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-2', 'Other University', 'other.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const insertComplaint = db.prepare(`
+      INSERT INTO ml_complaints (
+        id, university_id, category, urgency, staff_involved, owner_role,
+        payload_hash, payload_locator, created_at, deadline_at, status,
+        escalated, reopened, support_count, outcome_hash, last_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 0, 0, ?, NULL, ?)
+    `);
+    insertComplaint.run(
+      'c-uni1-normal',
+      'uni-1',
+      'verbal',
+      'normal',
+      0,
+      'university',
+      'payload-1',
+      '2026-02-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+      'not_started',
+      3,
+      '2026-02-01T00:00:00.000Z',
+    );
+    insertComplaint.run(
+      'c-uni1-staff',
+      'uni-1',
+      'sexual',
+      'urgent',
+      1,
+      'ugc',
+      'payload-2',
+      '2026-02-02T00:00:00.000Z',
+      '2027-01-01T00:00:00.000Z',
+      'pending_investigation',
+      2,
+      '2026-02-02T00:00:00.000Z',
+    );
+    insertComplaint.run(
+      'c-uni2-normal',
+      'uni-2',
+      'cyber',
+      'normal',
+      0,
+      'university',
+      'payload-3',
+      '2026-02-03T00:00:00.000Z',
+      '2027-02-01T00:00:00.000Z',
+      'finished',
+      1,
+      '2026-02-03T00:00:00.000Z',
+    );
+
+    const insertHistory = db.prepare(`
+      INSERT INTO ml_history (complaint_id, status, at, actor_role, note_hash)
+      VALUES (?, ?, ?, ?, NULL)
+    `);
+    insertHistory.run(
+      'c-uni1-normal',
+      'not_started',
+      '2026-02-01T00:00:00.000Z',
+      'student',
+    );
+    insertHistory.run(
+      'c-uni1-normal',
+      'pending_investigation',
+      '2026-02-04T00:00:00.000Z',
+      'university',
+    );
+
+    const studentList = await ledger.listComplaints({
+      viewerRole: 'student',
+      universityId: 'uni-1',
+    });
+    expect(studentList.complaints.map((complaint) => complaint.id)).toEqual([
+      'c-uni1-staff',
+      'c-uni1-normal',
+    ]);
+    expect(Object.keys(studentList.complaints[0]!)).not.toContain(
+      'payloadLocator',
+    );
+    expect(Object.keys(studentList.complaints[0]!)).not.toContain(
+      'evidenceLocator',
+    );
+
+    const universityList = await ledger.listComplaints({
+      viewerRole: 'university',
+      universityId: 'uni-1',
+    });
+    expect(universityList.complaints.map((complaint) => complaint.id)).toEqual([
+      'c-uni1-staff',
+      'c-uni1-normal',
+    ]);
+    expect(universityList.complaints[0]).toEqual({
+      id: 'c-uni1-staff',
+      createdAt: '2026-02-02T00:00:00.000Z',
+      category: 'sexual',
+      supportCount: 2,
+      status: 'pending_investigation',
+    });
+
+    const ugcList = await ledger.listComplaints({ viewerRole: 'ugc' });
+    expect(ugcList.complaints.map((complaint) => complaint.id)).toEqual([
+      'c-uni2-normal',
+      'c-uni1-staff',
+      'c-uni1-normal',
+    ]);
+    expect(
+      (ugcList.complaints[1]! as { staffInvolved: boolean }).staffInvolved,
+    ).toBe(true);
+
+    const studentComplaint = await ledger.getComplaint({
+      viewerRole: 'student',
+      universityId: 'uni-1',
+      complaintId: 'c-uni1-normal',
+    });
+    expect(studentComplaint.complaint.id).toBe('c-uni1-normal');
+    expect(Object.keys(studentComplaint.complaint)).not.toContain(
+      'payloadLocator',
+    );
+
+    await expect(
+      ledger.getComplaint({
+        viewerRole: 'student',
+        universityId: 'uni-1',
+        complaintId: 'c-uni2-normal',
+      }),
+    ).rejects.toThrow('viewer cannot access this complaint');
+
+    const universityComplaint = await ledger.getComplaint({
+      viewerRole: 'university',
+      universityId: 'uni-1',
+      complaintId: 'c-uni1-staff',
+    });
+    expect(universityComplaint.complaint).toEqual({
+      id: 'c-uni1-staff',
+      createdAt: '2026-02-02T00:00:00.000Z',
+      category: 'sexual',
+      supportCount: 2,
+      status: 'pending_investigation',
+    });
+
+    await expect(
+      ledger.getComplaint({
+        viewerRole: 'university',
+        universityId: 'uni-2',
+        complaintId: 'c-uni1-normal',
+      }),
+    ).rejects.toThrow('viewer cannot access this complaint');
+
+    const ugcComplaint = await ledger.getComplaint({
+      viewerRole: 'ugc',
+      complaintId: 'c-uni1-staff',
+    });
+    expect(ugcComplaint.complaint.id).toBe('c-uni1-staff');
+    expect(
+      (ugcComplaint.complaint as { staffInvolved: boolean }).staffInvolved,
+    ).toBe(true);
+
+    const studentHistory = await ledger.getHistory({
+      viewerRole: 'student',
+      universityId: 'uni-1',
+      complaintId: 'c-uni1-normal',
+    });
+    expect(studentHistory.entries).toEqual([
+      {
+        complaintId: 'c-uni1-normal',
+        status: 'not_started',
+        at: '2026-02-01T00:00:00.000Z',
+        actorRole: 'student',
+        noteHash: null,
+      },
+      {
+        complaintId: 'c-uni1-normal',
+        status: 'pending_investigation',
+        at: '2026-02-04T00:00:00.000Z',
+        actorRole: 'university',
+        noteHash: null,
+      },
+    ]);
+
+    await expect(
+      ledger.getHistory({
+        viewerRole: 'student',
+        universityId: 'uni-1',
+        complaintId: 'c-uni2-normal',
+      }),
+    ).rejects.toThrow('viewer cannot access this complaint');
+
+    const ugcHistory = await ledger.getHistory({
+      viewerRole: 'ugc',
+      complaintId: 'c-uni1-normal',
+    });
+    expect(ugcHistory.entries).toHaveLength(2);
+
+    const studentStats = await ledger.getStats({
+      viewerRole: 'student',
+      universityId: 'uni-1',
+    });
+    expect(studentStats).toEqual({
+      totalComplaints: null,
+      byCategory: {
+        verbal: null,
+        physical: null,
+        sexual: null,
+        cyber: null,
+        financial: null,
+        other: null,
+      },
+      byUrgency: { normal: null, urgent: null, other: null },
+      byStatus: {
+        not_started: null,
+        pending_investigation: null,
+        finished: null,
+        other: null,
+      },
+      overdue: null,
+      staffInvolved: null,
+    });
+
+    const ugcStats = await ledger.getStats({ viewerRole: 'ugc' });
+    expect(ugcStats.totalComplaints).toBe(3);
+    expect(ugcStats.byCategory.cyber).toBeNull();
+    expect(ugcStats.byStatus.finished).toBeNull();
+    expect(ugcStats.overdue).toBe(1);
+    expect(ugcStats.staffInvolved).toBe(1);
+    expect(ugcStats.byUniversity).toEqual({ 'uni-1': 2, 'uni-2': 1 });
+
+    expect(() =>
+      ledger.listComplaints({ viewerRole: 'student' }),
+    ).toThrow('universityId is required for this viewer role');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('protects stats totals below the minimum group size', async () => {
+    for (const count of [1, 4, 5]) {
+      const { db, dir } = newDb();
+      db.prepare(
+        `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+      ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+      const ledger = new MockLedger(db);
+
+      for (let index = 0; index < count; index += 1) {
+        insertStatsComplaint(db, `c-${count}-${index}`, 'uni-1', 'verbal');
+      }
+
+      const stats = await ledger.getStats({
+        viewerRole: 'student',
+        universityId: 'uni-1',
+      });
+      expect(stats.totalComplaints).toBe(count < 5 ? null : 5);
+      expect(stats.byCategory.verbal).toBe(count < 5 ? null : 5);
+      expect(stats.byCategory.other).toBeNull();
+      expect(stats.byUrgency.normal).toBe(count < 5 ? null : 5);
+      expect(stats.byUrgency.other).toBeNull();
+      expect(stats.byStatus.not_started).toBe(count < 5 ? null : 5);
+      expect(stats.byStatus.other).toBeNull();
+      expect(stats.overdue).toBeNull();
+      expect(stats.staffInvolved).toBeNull();
+
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('merges small breakdown groups and gives UGC exact university totals', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-2', 'Other University', 'other.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    for (let index = 0; index < 4; index += 1) {
+      insertStatsComplaint(db, `c-uni1-${index}`, 'uni-1', 'verbal');
+    }
+    insertStatsComplaint(db, 'c-uni2-0', 'uni-2', 'physical');
+
+    const studentStats = await ledger.getStats({
+      viewerRole: 'student',
+      universityId: 'uni-1',
+    });
+    expect(studentStats.totalComplaints).toBeNull();
+    expect(studentStats.byCategory.verbal).toBeNull();
+    expect(studentStats.byCategory.other).toBeNull();
+
+    const ugcStats = await ledger.getStats({ viewerRole: 'ugc' });
+    expect(ugcStats.totalComplaints).toBe(5);
+    expect(ugcStats.byUniversity).toEqual({ 'uni-1': 4, 'uni-2': 1 });
+    expect(ugcStats.byCategory.verbal).toBeNull();
+    expect(ugcStats.byCategory.physical).toBeNull();
+    expect(ugcStats.byCategory.other).toBe(5);
+    expect(ugcStats.byUrgency.normal).toBe(5);
+    expect(ugcStats.byUrgency.other).toBeNull();
+    expect(ugcStats.byStatus.not_started).toBe(5);
+    expect(ugcStats.byStatus.other).toBeNull();
 
     db.close();
     rmSync(dir, { recursive: true, force: true });

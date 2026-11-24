@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type {
   Category,
-  ComplaintRecord,
+  ComplaintListItem,
+  ComplaintViewerRole,
   HistoryEntry,
   OwnerRole,
   Status,
@@ -279,6 +280,7 @@ export const reopenComplaintResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface ListComplaintsFilter {
+  viewerRole: ComplaintViewerRole;
   universityId?: string;
   status?: Status;
   category?: Category;
@@ -287,11 +289,12 @@ export interface ListComplaintsFilter {
 }
 
 export interface ListComplaintsResult {
-  complaints: ComplaintRecord[];
+  complaints: ComplaintListItem[];
 }
 
 export const listComplaintsFilterSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
     universityId: z.string().min(1).optional(),
     status: z.enum(['not_started', 'pending_investigation', 'finished']).optional(),
     category: z
@@ -302,33 +305,53 @@ export const listComplaintsFilterSchema = z
   })
   .strict() satisfies z.ZodType<ListComplaintsFilter>;
 
+const complaintRecordResultSchema = z.object({
+  id: z.string().min(1),
+  universityId: z.string().min(1),
+  category: z.enum([
+    'verbal',
+    'physical',
+    'sexual',
+    'cyber',
+    'financial',
+    'other',
+  ]),
+  urgency: z.enum(['normal', 'urgent']),
+  staffInvolved: z.boolean(),
+  ownerRole: z.enum(['university', 'ugc']),
+  payloadHash: z.string().min(1),
+  createdAt: z.string().datetime(),
+  deadlineAt: z.string().datetime(),
+  status: z.enum(['not_started', 'pending_investigation', 'finished']),
+  escalated: z.boolean(),
+  reopened: z.boolean(),
+  supportCount: z.number().int().nonnegative(),
+  outcomeHash: z.string().nullable(),
+  lastUpdatedAt: z.string().datetime(),
+});
+
+const redactedComplaintRecordResultSchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  category: z.enum([
+    'verbal',
+    'physical',
+    'sexual',
+    'cyber',
+    'financial',
+    'other',
+  ]),
+  supportCount: z.number().int().nonnegative(),
+  status: z.enum(['not_started', 'pending_investigation', 'finished']),
+});
+
 export const listComplaintsResultSchema = z
   .object({
     complaints: z.array(
-      z.object({
-        id: z.string().min(1),
-        universityId: z.string().min(1),
-        category: z.enum([
-          'verbal',
-          'physical',
-          'sexual',
-          'cyber',
-          'financial',
-          'other',
-        ]),
-        urgency: z.enum(['normal', 'urgent']),
-        staffInvolved: z.boolean(),
-        ownerRole: z.enum(['university', 'ugc']),
-        payloadHash: z.string().min(1),
-        createdAt: z.string().datetime(),
-        deadlineAt: z.string().datetime(),
-        status: z.enum(['not_started', 'pending_investigation', 'finished']),
-        escalated: z.boolean(),
-        reopened: z.boolean(),
-        supportCount: z.number().int().nonnegative(),
-        outcomeHash: z.string().nullable(),
-        lastUpdatedAt: z.string().datetime(),
-      }),
+      z.union([
+        complaintRecordResultSchema,
+        redactedComplaintRecordResultSchema,
+      ]),
     ),
   })
   .strict() satisfies z.ZodType<ListComplaintsResult>;
@@ -338,45 +361,29 @@ export const listComplaintsResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface GetComplaintInput {
+  viewerRole: ComplaintViewerRole;
+  universityId?: string;
   complaintId: string;
 }
 
 export interface GetComplaintResult {
-  complaint: ComplaintRecord;
+  complaint: ComplaintListItem;
 }
 
 export const getComplaintInputSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
+    universityId: z.string().min(1).optional(),
     complaintId: z.string().min(1),
   })
   .strict() satisfies z.ZodType<GetComplaintInput>;
 
 export const getComplaintResultSchema = z
   .object({
-    complaint: z.object({
-      id: z.string().min(1),
-      universityId: z.string().min(1),
-      category: z.enum([
-        'verbal',
-        'physical',
-        'sexual',
-        'cyber',
-        'financial',
-        'other',
-      ]),
-      urgency: z.enum(['normal', 'urgent']),
-      staffInvolved: z.boolean(),
-      ownerRole: z.enum(['university', 'ugc']),
-      payloadHash: z.string().min(1),
-      createdAt: z.string().datetime(),
-      deadlineAt: z.string().datetime(),
-      status: z.enum(['not_started', 'pending_investigation', 'finished']),
-      escalated: z.boolean(),
-      reopened: z.boolean(),
-      supportCount: z.number().int().nonnegative(),
-      outcomeHash: z.string().nullable(),
-      lastUpdatedAt: z.string().datetime(),
-    }),
+    complaint: z.union([
+      complaintRecordResultSchema,
+      redactedComplaintRecordResultSchema,
+    ]),
   })
   .strict() satisfies z.ZodType<GetComplaintResult>;
 
@@ -385,6 +392,8 @@ export const getComplaintResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface GetHistoryInput {
+  viewerRole: ComplaintViewerRole;
+  universityId?: string;
   complaintId: string;
 }
 
@@ -394,6 +403,8 @@ export interface GetHistoryResult {
 
 export const getHistoryInputSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
+    universityId: z.string().min(1).optional(),
     complaintId: z.string().min(1),
   })
   .strict() satisfies z.ZodType<GetHistoryInput>;
@@ -417,51 +428,70 @@ export const getHistoryResultSchema = z
 // ---------------------------------------------------------------------------
 
 export interface GetStatsInput {
+  viewerRole: ComplaintViewerRole;
   universityId?: string;
 }
 
+export type ProtectedCount = number | null;
+export type StatsBreakdown<K extends string> = Record<
+  K,
+  ProtectedCount
+> & { other: ProtectedCount };
+export type CategoryStatsBreakdown = StatsBreakdown<Exclude<Category, 'other'>>;
+export type UrgencyStatsBreakdown = StatsBreakdown<Urgency>;
+export type StatusStatsBreakdown = StatsBreakdown<Status>;
+
 export interface GetStatsResult {
-  totalComplaints: number;
-  byCategory: Record<Category, number>;
-  byUrgency: Record<Urgency, number>;
-  byStatus: Record<Status, number>;
-  overdue: number;
-  staffInvolved: number;
+  totalComplaints: ProtectedCount;
+  byCategory: CategoryStatsBreakdown;
+  byUrgency: UrgencyStatsBreakdown;
+  byStatus: StatusStatsBreakdown;
+  overdue: ProtectedCount;
+  staffInvolved: ProtectedCount;
+  byUniversity?: Record<string, number>;
 }
 
 export const getStatsInputSchema = z
   .object({
+    viewerRole: z.enum(['student', 'university', 'ugc']),
     universityId: z.string().min(1).optional(),
   })
   .strict() satisfies z.ZodType<GetStatsInput>;
 
+const protectedCountSchema = z.number().int().nonnegative().nullable();
+
 export const getStatsResultSchema = z
   .object({
-    totalComplaints: z.number().int().nonnegative(),
+    totalComplaints: protectedCountSchema,
     byCategory: z
       .object({
-        verbal: z.number().int().nonnegative(),
-        physical: z.number().int().nonnegative(),
-        sexual: z.number().int().nonnegative(),
-        cyber: z.number().int().nonnegative(),
-        financial: z.number().int().nonnegative(),
-        other: z.number().int().nonnegative(),
+        verbal: protectedCountSchema,
+        physical: protectedCountSchema,
+        sexual: protectedCountSchema,
+        cyber: protectedCountSchema,
+        financial: protectedCountSchema,
+        other: protectedCountSchema,
       })
       .strict(),
     byUrgency: z
       .object({
-        normal: z.number().int().nonnegative(),
-        urgent: z.number().int().nonnegative(),
+        normal: protectedCountSchema,
+        urgent: protectedCountSchema,
+        other: protectedCountSchema,
       })
       .strict(),
     byStatus: z
       .object({
-        not_started: z.number().int().nonnegative(),
-        pending_investigation: z.number().int().nonnegative(),
-        finished: z.number().int().nonnegative(),
+        not_started: protectedCountSchema,
+        pending_investigation: protectedCountSchema,
+        finished: protectedCountSchema,
+        other: protectedCountSchema,
       })
       .strict(),
-    overdue: z.number().int().nonnegative(),
-    staffInvolved: z.number().int().nonnegative(),
+    overdue: protectedCountSchema,
+    staffInvolved: protectedCountSchema,
+    byUniversity: z
+      .record(z.string().min(1), z.number().int().nonnegative())
+      .optional(),
   })
   .strict() satisfies z.ZodType<GetStatsResult>;

@@ -1,4 +1,25 @@
 import { createHash } from 'node:crypto';
+import type {
+  FileComplaintInput,
+  FileComplaintResult,
+  GetComplaintInput,
+  GetComplaintResult,
+  GetLeavesInput,
+  GetLeavesResult,
+  GetRootsInput,
+  GetRootsResult,
+  GetStatsInput,
+  GetStatsResult,
+  ListComplaintsFilter,
+  ListComplaintsResult,
+  MembershipProof,
+  ReopenComplaintInput,
+  ReopenComplaintResult,
+  SupportComplaintInput,
+  SupportComplaintResult,
+  UpdateStatusInput,
+  UpdateStatusResult,
+} from '@usafe/shared';
 import { MERKLE_TREE_DEPTH } from '@usafe/shared';
 
 export interface EnrollmentReceipt {
@@ -7,9 +28,31 @@ export interface EnrollmentReceipt {
   root: string;
 }
 
+export interface EnrollCommitmentInput {
+  universityId: string;
+  commitment: string;
+}
+
 export interface EnrollmentLedger {
-  enrollCommitment(universityId: string, commitment: string): EnrollmentReceipt;
+  enrollCommitment(
+    input: EnrollCommitmentInput,
+  ): EnrollmentReceipt | Promise<EnrollmentReceipt>;
   verifyEnrollmentProof?(proof: unknown): boolean | Promise<boolean>;
+}
+
+export interface ComplaintLedger {
+  verifyMembershipMock(proof: MembershipProof): Promise<boolean>;
+  fileComplaint(input: FileComplaintInput): Promise<FileComplaintResult>;
+  supportComplaint(
+    input: SupportComplaintInput,
+  ): Promise<SupportComplaintResult>;
+  updateStatus(input: UpdateStatusInput): Promise<UpdateStatusResult>;
+  reopenComplaint(input: ReopenComplaintInput): Promise<ReopenComplaintResult>;
+  listComplaints(filter: ListComplaintsFilter): Promise<ListComplaintsResult>;
+  getComplaint(input: GetComplaintInput): Promise<GetComplaintResult>;
+  getStats(input: GetStatsInput): Promise<GetStatsResult>;
+  getLeaves(input: GetLeavesInput): Promise<GetLeavesResult>;
+  getRoots(input: GetRootsInput): Promise<GetRootsResult>;
 }
 
 const DOMAIN_TAG_MERKLE_INNER = 'merkle-inner';
@@ -44,16 +87,16 @@ interface TreeState {
 export class StubLedger implements EnrollmentLedger {
   private readonly trees = new Map<string, TreeState>();
 
-  enrollCommitment(universityId: string, commitment: string): EnrollmentReceipt {
-    const leaf: Bytes = Buffer.from(commitment, 'hex');
+  enrollCommitment(input: EnrollCommitmentInput): EnrollmentReceipt {
+    const leaf: Bytes = Buffer.from(input.commitment, 'hex');
     if (leaf.length !== 32) {
       throw new Error('invalid commitment');
     }
 
-    let state = this.trees.get(universityId);
+    let state = this.trees.get(input.universityId);
     if (state === undefined) {
       state = { leaves: [], nodes: [] };
-      this.trees.set(universityId, state);
+      this.trees.set(input.universityId, state);
     }
     if (state.leaves.some((existing) => existing.equals(leaf))) {
       throw new Error('duplicate commitment');
@@ -71,7 +114,9 @@ export class StubLedger implements EnrollmentLedger {
       state.nodes[level + 1] ??= [];
       const parentIndex = Math.floor(index / 2);
       const parent =
-        index % 2 === 0 ? hashPair(current, sibling) : hashPair(sibling, current);
+        index % 2 === 0
+          ? hashPair(current, sibling)
+          : hashPair(sibling, current);
       state.nodes[level + 1]![parentIndex] = parent;
       current = parent;
       index = parentIndex;
@@ -85,9 +130,9 @@ export class StubLedger implements EnrollmentLedger {
       index = Math.floor(index / 2);
     }
 
-    const root = (state.nodes[MERKLE_TREE_DEPTH]?.[0] ?? zeros[MERKLE_TREE_DEPTH]!).toString(
-      'hex',
-    );
+    const root = (
+      state.nodes[MERKLE_TREE_DEPTH]?.[0] ?? zeros[MERKLE_TREE_DEPTH]!
+    ).toString('hex');
     return { leafIndex, path, root };
   }
 

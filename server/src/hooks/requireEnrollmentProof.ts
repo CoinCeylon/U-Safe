@@ -1,5 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { StubLedger, type EnrollmentLedger } from '../services/ledger.js';
+import {
+  StubLedger,
+  type ComplaintLedger,
+  type EnrollmentLedger,
+} from '../services/ledger.js';
 
 export interface EnrollmentProof {
   [key: string]: unknown;
@@ -50,15 +54,24 @@ const extractProof = (body: unknown): EnrollmentProof | null => {
   return proof as EnrollmentProof;
 };
 
+type ProofVerifyingLedger = EnrollmentLedger | ComplaintLedger;
+
 const verifyWithLedger = async (
-  ledger: EnrollmentLedger,
+  ledger: ProofVerifyingLedger,
   proof: EnrollmentProof,
 ): Promise<boolean> => {
-  const candidate = ledger as EnrollmentLedger & {
-    verifyEnrollmentProof?: (proof: EnrollmentProof) => boolean | Promise<boolean>;
+  const candidate = ledger as ProofVerifyingLedger & {
+    verifyEnrollmentProof?: (
+      proof: EnrollmentProof,
+    ) => boolean | Promise<boolean>;
     verifyMembership?: (proof: EnrollmentProof) => boolean | Promise<boolean>;
+    verifyMembershipMock?: (
+      proof: EnrollmentProof,
+    ) => boolean | Promise<boolean>;
     verifyProof?: (proof: EnrollmentProof) => boolean | Promise<boolean>;
-    checkEnrollmentProof?: (proof: EnrollmentProof) => boolean | Promise<boolean>;
+    checkEnrollmentProof?: (
+      proof: EnrollmentProof,
+    ) => boolean | Promise<boolean>;
   };
 
   if (typeof candidate.verifyEnrollmentProof === 'function') {
@@ -66,6 +79,9 @@ const verifyWithLedger = async (
   }
   if (typeof candidate.verifyMembership === 'function') {
     return Boolean(await candidate.verifyMembership(proof));
+  }
+  if (typeof candidate.verifyMembershipMock === 'function') {
+    return Boolean(await candidate.verifyMembershipMock(proof));
   }
   if (typeof candidate.verifyProof === 'function') {
     return Boolean(await candidate.verifyProof(proof));
@@ -76,8 +92,11 @@ const verifyWithLedger = async (
   return true;
 };
 
-const createGuard = (ledger: EnrollmentLedger) => {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+const createGuard = (ledger: ProofVerifyingLedger) => {
+  return async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> => {
     const proof = extractProof(request.body);
     if (proof === null) {
       reply.code(401).send({ error: 'enrollment proof required' });
@@ -101,7 +120,7 @@ const createGuard = (ledger: EnrollmentLedger) => {
 };
 
 export const requireEnrollmentProof = ((
-  requestOrLedger?: FastifyRequest | EnrollmentLedger,
+  requestOrLedger?: FastifyRequest | ProofVerifyingLedger,
   reply?: FastifyReply,
 ): unknown => {
   if (isRequest(requestOrLedger)) {
@@ -109,12 +128,13 @@ export const requireEnrollmentProof = ((
     return guard(requestOrLedger, reply as FastifyReply);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-  const ledger = (requestOrLedger as EnrollmentLedger | undefined) ?? defaultLedger;
+  const ledger = requestOrLedger ?? defaultLedger;
   return createGuard(ledger);
 }) as {
   (request: FastifyRequest, reply: FastifyReply): Promise<void>;
-  (ledger?: EnrollmentLedger): (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+  (
+    ledger?: ProofVerifyingLedger,
+  ): (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 };
 
 export default requireEnrollmentProof;

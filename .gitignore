@@ -45,6 +45,9 @@ pnpm-debug.log*
 # Local dev mailbox messages contain recipient addresses and OTP codes
 server/.dev-mailbox/
 
+# Development-only role key backups (passphrase protected, never commit)
+.dev-keys/
+
 # Encrypted evidence blobs (runtime data, never commit)
 server/data/blobs/
 

@@ -29,8 +29,8 @@ export class EnrollmentService {
     private readonly ledger: EnrollmentLedger,
   ) {}
 
-  enroll(ticket: string, commitment: string): EnrollResult {
-    return this.db.transaction(() => {
+  async enroll(ticket: string, commitment: string): Promise<EnrollResult> {
+    const prepared = this.db.transaction(() => {
       const details = this.tickets.consume(ticket);
       if (details === null) {
         throw new EnrollmentError('invalid ticket');
@@ -57,15 +57,35 @@ export class EnrollmentService {
         throw new EnrollmentError('ceiling reached');
       }
 
-      const receipt = this.ledger.enrollCommitment(details.universityId, commitment);
-      this.db
-        .prepare('UPDATE roster SET enrolled_at = ? WHERE id = ?')
-        .run(new Date().toISOString(), details.rosterId);
-
       return {
-        ...receipt,
+        details,
         communityKeyWrapped: university.community_key_wrapped_for_ugc,
       };
-    })();
+    });
+    const { details, communityKeyWrapped } = prepared();
+
+    let receipt: EnrollmentReceipt;
+    try {
+      receipt = await this.ledger.enrollCommitment({
+        universityId: details.universityId,
+        commitment,
+      });
+    } catch (error) {
+      this.db
+        .prepare('UPDATE tickets SET used = 0 WHERE id = ? AND used = 1')
+        .run(ticket);
+      throw new EnrollmentError(
+        error instanceof Error ? error.message : 'enrollment failed',
+      );
+    }
+
+    this.db
+      .prepare('UPDATE roster SET enrolled_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), details.rosterId);
+
+    return {
+      ...receipt,
+      communityKeyWrapped,
+    };
   }
 }

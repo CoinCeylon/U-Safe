@@ -36,6 +36,13 @@ import type {
  */
 export type LedgerMode = 'mock' | 'testnet';
 
+export class LedgerAuthorizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LedgerAuthorizationError';
+  }
+}
+
 /**
  * Abstraction over the chain so Groups 1-7 work in mock mode and Group 9 can swap in
  * the real Midnight contract without touching the portals.

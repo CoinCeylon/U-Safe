@@ -32,3 +32,40 @@ Record package names, versions and adaptations here.
   SHA-256 as `@usafe/crypto`, so its paths verify with `MerkleTree.verify`. `communityKeyWrapped`
   currently returns `community_key_wrapped_for_ugc` as the only stored wrapped copy;
   M065 will replace this with the student-delivery wrapping.
+- M043 overlaps M045 and M047: it adds only the university list path needed to redact
+  staff-involved complaints and the status route needed for its HTTP 403 acceptance
+  test. Student and UGC queries, the remaining complaint routes, and the CLI remain in
+  M045 and M047. Staff ownership is derived from `staff.university_id`: a null
+  university identifies UGC staff, while a non-null university identifies university
+  staff. UGC-only payload sealing remains deferred to the portal work in M060.
+- M044 stores the UGC demo public key on a single `staff` row (`role='ugc'`,
+  `address='ugc-demo-officer'`, null university) and university public keys in
+  `universities.public_key_jwk`. The student-delivery copy of each community key is
+  stored in the new `universities.community_key_wrapped_for_delivery` column as a
+  `SecureStore` backup encrypted with `COMMUNITY_DELIVERY_SECRET`. Existing
+  passphrase-protected `.dev-keys` backups are reused, so a second seed run neither
+  duplicates rows nor rotates complete demo key sets.
+- M045 makes the mock ledger trust the caller-supplied viewer role and university id;
+  M047's HTTP hooks will derive those fields from a student query or a staff session.
+  Student and university viewers must supply a university id, while UGC viewers omit it to
+  see all universities (or supply one for a focused query). `getHistory` remains visible
+  for university viewers on staff-involved cases because it contains only status,
+  timestamps, actor roles and note hashes allowed by specification section 7.3; the
+  detailed complaint record is what gets redacted.
+- M046 uses `null` as the API representation of `bucketCount`'s protected result. Portals
+  will render that null as the phrase "fewer than 5". Small groups in every category,
+  urgency and status breakdown are merged into an `other` bucket; if that merged bucket is
+  itself below `MIN_GROUP_SIZE`, it is also null. Student and university scalar totals,
+  overdue and staff-involved counts are protected the same way, while UGC viewers receive
+  exact global totals and an exact `byUniversity` map plus bucketed breakdowns.
+- M047 treats an unauthenticated complaint/list/stats reader as a student, who must supply
+  `?university=`. A staff bearer token upgrades that viewer to the staff's university, or to
+  UGC when the staff row has no university. The same `MockLedger` instance now backs HTTP
+  enrollment and complaint routes. The reopen route is present but returns 501 until the
+  reopen behaviour is implemented in M079. `npm run demo:cli` drives `MockLedger` directly
+  against `DATABASE_PATH`, prints only non-sensitive demo output, and supports `--no-status`
+  so the escalation job can demonstrate a deadline breach. `try:forge` is HTTP-only and
+  expects 401; `try:duplicate` keeps its student secret in memory, stores only the commitment,
+  files through HTTP, reuses one support proof, expects the second request to fail, and
+  confirms the final count stays at 1. The demo CLI uses the leaf indexes returned by
+  `enrollCommitment`, so it also works when a university already has earlier enrollments.

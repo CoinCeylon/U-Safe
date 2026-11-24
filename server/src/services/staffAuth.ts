@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { OwnerRole } from '@usafe/shared';
 
 export interface StaffAccount {
   id: number;
@@ -15,8 +16,21 @@ export interface StaffSession {
   staff: StaffAccount;
 }
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    staff?: StaffAccount;
+  }
+}
+
 const hashToken = (token: string): string =>
   createHash('sha256').update(token).digest('hex');
+
+export const staffOwnerRole = (staff: StaffAccount): OwnerRole => {
+  if (staff.university_id === null) {
+    return 'ugc';
+  }
+  return 'university';
+};
 
 const rowToStaff = (row: Record<string, unknown>): StaffAccount => ({
   id: Number(row.id),
@@ -151,6 +165,7 @@ export const requireStaff = (roleOrDb?: string | Database.Database, role?: strin
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
+    request.staff = staff;
   };
 };
 

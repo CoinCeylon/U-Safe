@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import {
+  bucketCount,
   computeZeroNodes,
   MERKLE_TREE_DEPTH,
   MerkleTree,
@@ -9,28 +10,50 @@ import {
   verifyMembershipMock,
 } from '@usafe/crypto';
 import {
+  CATEGORIES,
   DEMO_SLA_SECONDS,
+  MIN_GROUP_SIZE,
   NORMAL_DEADLINE_SECONDS,
+  STATUSES,
   URGENT_DEADLINE_SECONDS,
+  URGENCIES,
 } from '@usafe/shared';
 import type {
+  Category,
+  ComplaintListItem,
+  ComplaintRecord,
+  ComplaintViewerRole,
   EnrollCommitmentInput,
   EnrollCommitmentResult,
   FileComplaintInput,
   FileComplaintResult,
+  GetComplaintInput,
+  GetComplaintResult,
+  GetHistoryInput,
+  GetHistoryResult,
   GetLeavesInput,
   GetLeavesResult,
   GetRootsInput,
   GetRootsResult,
+  GetStatsInput,
+  GetStatsResult,
+  HistoryActorRole,
+  ListComplaintsFilter,
+  ListComplaintsResult,
   MarkEscalatedInput,
   MarkEscalatedResult,
   MembershipProof,
+  OwnerRole,
+  RedactedComplaintRecord,
+  Status,
+  StatsBreakdown,
   SupportComplaintInput,
   SupportComplaintResult,
+  Urgency,
   UpdateStatusInput,
   UpdateStatusResult,
 } from '@usafe/shared';
-import { LedgerAdapter } from './ledger.js';
+import { LedgerAdapter, LedgerAuthorizationError } from './ledger.js';
 
 const GRACE_WINDOW_DAYS = 14;
 
@@ -39,6 +62,24 @@ const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
 type TreeEntry = {
   tree: MerkleTree;
   leafCount: number;
+};
+
+type ComplaintRow = {
+  id: string;
+  university_id: string;
+  category: string;
+  urgency: string;
+  staff_involved: number;
+  owner_role: string;
+  payload_hash: string;
+  created_at: string;
+  deadline_at: string;
+  status: string;
+  escalated: number;
+  reopened: number;
+  support_count: number;
+  outcome_hash: string | null;
+  last_updated_at: string;
 };
 
 /**
@@ -401,7 +442,9 @@ export class MockLedger implements LedgerAdapter {
     //    match the complaint's stored owner_role, so a university cannot
     //    touch a UGC-owned complaint and vice versa.
     if (input.ownerRole !== complaint.owner_role) {
-      throw new Error('insufficient role to update this complaint');
+      throw new LedgerAuthorizationError(
+        'insufficient role to update this complaint',
+      );
     }
 
     // 3. Transitions only go forward.
@@ -503,19 +546,175 @@ export class MockLedger implements LedgerAdapter {
     return { complaintId: input.complaintId, escalated: true };
   }
   reopenComplaint(): Promise<import('@usafe/shared').ReopenComplaintResult> {
-    throw new Error('reopenComplaint is not yet implemented (M043)');
+    throw new Error('reopenComplaint is not yet implemented (M079)');
   }
-  listComplaints(): Promise<import('@usafe/shared').ListComplaintsResult> {
-    throw new Error('listComplaints is not yet implemented (M045)');
+  listComplaints(
+    filter: ListComplaintsFilter,
+  ): Promise<ListComplaintsResult> {
+    const universityId = this.resolveViewerUniversity(
+      filter.viewerRole,
+      filter.universityId,
+    );
+    const clauses: string[] = [];
+    const parameters: Array<string | number> = [];
+
+    if (universityId !== null) {
+      clauses.push('university_id = ?');
+      parameters.push(universityId);
+    }
+    if (filter.status !== undefined) {
+      clauses.push('status = ?');
+      parameters.push(filter.status);
+    }
+    if (filter.category !== undefined) {
+      clauses.push('category = ?');
+      parameters.push(filter.category);
+    }
+    if (filter.ownerRole !== undefined) {
+      clauses.push('owner_role = ?');
+      parameters.push(filter.ownerRole);
+    }
+    if (filter.escalated !== undefined) {
+      clauses.push('escalated = ?');
+      parameters.push(filter.escalated ? 1 : 0);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, university_id, category, urgency, staff_involved, owner_role,
+                payload_hash, created_at, deadline_at, status, escalated, reopened,
+                support_count, outcome_hash, last_updated_at
+         FROM ml_complaints
+         ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(...parameters) as ComplaintRow[];
+
+    const complaints: ComplaintListItem[] = rows.map((row) =>
+      this.complaintForViewer(filter.viewerRole, row),
+    );
+
+    return Promise.resolve({ complaints });
   }
-  getComplaint(): Promise<import('@usafe/shared').GetComplaintResult> {
-    throw new Error('getComplaint is not yet implemented (M045)');
+  getComplaint(input: GetComplaintInput): Promise<GetComplaintResult> {
+    const universityId = this.resolveViewerUniversity(
+      input.viewerRole,
+      input.universityId,
+    );
+    const row = this.getComplaintRow(input.complaintId);
+    if (row === undefined) {
+      return Promise.reject(new Error('complaint not found'));
+    }
+    if (universityId !== null && row.university_id !== universityId) {
+      return Promise.reject(
+        new LedgerAuthorizationError('viewer cannot access this complaint'),
+      );
+    }
+
+    return Promise.resolve({
+      complaint: this.complaintForViewer(input.viewerRole, row),
+    });
   }
-  getHistory(): Promise<import('@usafe/shared').GetHistoryResult> {
-    throw new Error('getHistory is not yet implemented (M045)');
+  getHistory(input: GetHistoryInput): Promise<GetHistoryResult> {
+    const universityId = this.resolveViewerUniversity(
+      input.viewerRole,
+      input.universityId,
+    );
+    const complaint = this.getComplaintRow(input.complaintId);
+    if (complaint === undefined) {
+      return Promise.reject(new Error('complaint not found'));
+    }
+    if (universityId !== null && complaint.university_id !== universityId) {
+      return Promise.reject(
+        new LedgerAuthorizationError('viewer cannot access this complaint'),
+      );
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT complaint_id, status, at, actor_role, note_hash
+         FROM ml_history WHERE complaint_id = ? ORDER BY at ASC`,
+      )
+      .all(input.complaintId) as Array<{
+      complaint_id: string;
+      status: string;
+      at: string;
+      actor_role: string;
+      note_hash: string | null;
+    }>;
+
+    return Promise.resolve({
+      entries: rows.map((row) => ({
+        complaintId: row.complaint_id,
+        status: row.status as Status,
+        at: row.at,
+        actorRole: row.actor_role as HistoryActorRole,
+        noteHash: row.note_hash,
+      })),
+    });
   }
-  getStats(): Promise<import('@usafe/shared').GetStatsResult> {
-    throw new Error('getStats is not yet implemented (M046)');
+  getStats(input: GetStatsInput): Promise<GetStatsResult> {
+    const universityId = this.resolveViewerUniversity(
+      input.viewerRole,
+      input.universityId,
+    );
+    const rows = this.db
+      .prepare(
+        `SELECT university_id, category, urgency, status, deadline_at, staff_involved
+         FROM ml_complaints
+         ${universityId === null ? '' : 'WHERE university_id = ?'}`,
+      )
+      .all(...(universityId === null ? [] : [universityId])) as Array<{
+      university_id: string;
+      category: string;
+      urgency: string;
+      status: string;
+      deadline_at: string;
+      staff_involved: number;
+    }>;
+
+    const byCategory = Object.fromEntries(
+      CATEGORIES.map((category) => [category, 0]),
+    ) as Record<Category, number>;
+    const byUrgency = Object.fromEntries(
+      URGENCIES.map((urgency) => [urgency, 0]),
+    ) as Record<Urgency, number>;
+    const byStatus = Object.fromEntries(
+      STATUSES.map((status) => [status, 0]),
+    ) as Record<Status, number>;
+    const byUniversity: Record<string, number> = {};
+    const now = new Date().toISOString();
+    let overdue = 0;
+    let staffInvolved = 0;
+
+    for (const row of rows) {
+      byCategory[row.category as Category] += 1;
+      byUrgency[row.urgency as Urgency] += 1;
+      byStatus[row.status as Status] += 1;
+      byUniversity[row.university_id] =
+        (byUniversity[row.university_id] ?? 0) + 1;
+      if (row.deadline_at <= now && row.status !== 'finished') {
+        overdue += 1;
+      }
+      if (row.staff_involved === 1) {
+        staffInvolved += 1;
+      }
+    }
+
+    const isUgc = input.viewerRole === 'ugc';
+    return Promise.resolve({
+      totalComplaints: isUgc
+        ? rows.length
+        : bucketCount(rows.length, MIN_GROUP_SIZE),
+      byCategory: this.protectBreakdown(byCategory),
+      byUrgency: this.protectBreakdown(byUrgency),
+      byStatus: this.protectBreakdown(byStatus),
+      overdue: isUgc ? overdue : bucketCount(overdue, MIN_GROUP_SIZE),
+      staffInvolved: isUgc
+        ? staffInvolved
+        : bucketCount(staffInvolved, MIN_GROUP_SIZE),
+      ...(isUgc ? { byUniversity } : {}),
+    });
   }
 
   // ------------------------------------------------------------------
@@ -525,6 +724,92 @@ export class MockLedger implements LedgerAdapter {
   // ------------------------------------------------------------------
   // Private helpers
   // ------------------------------------------------------------------
+
+  private protectBreakdown<K extends string>(
+    counts: Record<K, number>,
+  ): StatsBreakdown<K> {
+    const protectedCounts: Record<string, number | null> = {};
+    let other = 0;
+
+    for (const [key, value] of Object.entries(counts) as Array<[K, number]>) {
+      if (key === 'other') {
+        other += value;
+        continue;
+      }
+      const protectedCount = bucketCount(value, MIN_GROUP_SIZE);
+      protectedCounts[key] = protectedCount;
+      if (protectedCount === null) {
+        other += value;
+      }
+    }
+
+    protectedCounts.other = bucketCount(other, MIN_GROUP_SIZE);
+    return protectedCounts as StatsBreakdown<K>;
+  }
+
+  private resolveViewerUniversity(
+    viewerRole: ComplaintViewerRole,
+    universityId: string | undefined,
+  ): string | null {
+    if (viewerRole === 'ugc') {
+      return universityId ?? null;
+    }
+    if (universityId === undefined || universityId.length === 0) {
+      throw new Error('universityId is required for this viewer role');
+    }
+    return universityId;
+  }
+
+  private getComplaintRow(complaintId: string): ComplaintRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT id, university_id, category, urgency, staff_involved, owner_role,
+                payload_hash, created_at, deadline_at, status, escalated, reopened,
+                support_count, outcome_hash, last_updated_at
+         FROM ml_complaints WHERE id = ?`,
+      )
+      .get(complaintId) as ComplaintRow | undefined;
+  }
+
+  private rowToComplaint(row: ComplaintRow): ComplaintRecord {
+    return {
+      id: row.id,
+      universityId: row.university_id,
+      category: row.category as Category,
+      urgency: row.urgency as Urgency,
+      staffInvolved: row.staff_involved === 1,
+      ownerRole: row.owner_role as OwnerRole,
+      payloadHash: row.payload_hash,
+      createdAt: row.created_at,
+      deadlineAt: row.deadline_at,
+      status: row.status as Status,
+      escalated: row.escalated === 1,
+      reopened: row.reopened === 1,
+      supportCount: row.support_count,
+      outcomeHash: row.outcome_hash,
+      lastUpdatedAt: row.last_updated_at,
+    };
+  }
+
+  private rowToRedactedComplaint(row: ComplaintRow): RedactedComplaintRecord {
+    return {
+      id: row.id,
+      createdAt: row.created_at,
+      category: row.category as Category,
+      supportCount: row.support_count,
+      status: row.status as Status,
+    };
+  }
+
+  private complaintForViewer(
+    viewerRole: ComplaintViewerRole,
+    row: ComplaintRow,
+  ): ComplaintListItem {
+    if (viewerRole === 'university' && row.staff_involved === 1) {
+      return this.rowToRedactedComplaint(row);
+    }
+    return this.rowToComplaint(row);
+  }
 
   private getUniversity(universityId: string): {
     id: string;
