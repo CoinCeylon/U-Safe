@@ -58,3 +58,5 @@ M054 | done | Community feed page with SSE live updates, complaint cards, filter
 M055 | done | Complaint detail page with full description, status timeline, and outcome message
 
 M056 | done | Anonymous support flow: unlock on demand, locally built mock proof, 2–12 s queued submission, optimistic count, quiet duplicate handling, and encrypted local support state
+
+M057 | done | File complaint form with 40–4000 character validation, category, urgency, staff-involved toggle, optional accused details, privacy guidance and filing slots
