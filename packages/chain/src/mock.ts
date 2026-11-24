@@ -23,6 +23,8 @@ import type {
   GetRootsInput,
   GetRootsResult,
   MembershipProof,
+  SupportComplaintInput,
+  SupportComplaintResult,
 } from '@usafe/shared';
 import { LedgerAdapter } from './ledger.js';
 
@@ -50,10 +52,23 @@ export class MockLedger implements LedgerAdapter {
   private readonly hashAdapter = new Sha256Adapter();
   private readonly zeroNodesPromise: Promise<Uint8Array[]>;
   private readonly trees = new Map<string, TreeEntry>();
+  private readonly publish: (event: { type: string; id: string }) => void;
 
-  constructor(db: Database.Database) {
+  constructor(
+    db: Database.Database,
+    options?: { publish?: (event: { type: string; id: string }) => void },
+  ) {
     this.db = db;
+    this.publish = options?.publish ?? (() => {});
     this.zeroNodesPromise = computeZeroNodes(MERKLE_TREE_DEPTH, this.hashAdapter);
+  }
+
+  private publishEvent(event: { type: string; id: string }): void {
+    try {
+      this.publish(event);
+    } catch {
+      // Event publishing failures must not fail the action.
+    }
   }
 
   // ------------------------------------------------------------------
@@ -284,12 +299,88 @@ export class MockLedger implements LedgerAdapter {
   }
 
   // ------------------------------------------------------------------
-  // Not yet implemented (M040-M047)
+  // Support a complaint (M040)
   // ------------------------------------------------------------------
 
-  supportComplaint(): Promise<import('@usafe/shared').SupportComplaintResult> {
-    throw new Error('supportComplaint is not yet implemented (M040)');
+  async supportComplaint(
+    input: SupportComplaintInput,
+  ): Promise<SupportComplaintResult> {
+    // 1. Verify the membership proof (root in grace window, valid Merkle path,
+    //    nullifier not already used).
+    const proofValid = await this.verifyMembershipMock(input.proof);
+    if (!proofValid) {
+      throw new Error('invalid membership proof');
+    }
+
+    // 2. Parse the proof data to extract the support context.
+    const data = JSON.parse(input.proof.data) as MockProofData;
+    const contextParts = data.context.split('|');
+    if (contextParts[0] !== 'support' || contextParts.length !== 2) {
+      throw new Error(
+        'proof context must be a support context: support|<complaintId>',
+      );
+    }
+    const complaintId = contextParts[1];
+    if (complaintId === undefined) {
+      throw new Error(
+        'proof context must be a support context: support|<complaintId>',
+      );
+    }
+
+    // 3. Look up the complaint.
+    const complaint = this.db
+      .prepare('SELECT * FROM ml_complaints WHERE id = ?')
+      .get(complaintId) as Record<string, unknown> | undefined;
+    if (complaint === undefined) {
+      throw new Error('complaint not found');
+    }
+
+    // 4. Verify that the proof's university matches the complaint's university.
+    if (input.proof.universityId !== complaint.university_id) {
+      throw new Error('proof university does not match complaint university');
+    }
+
+    // 5. Reject a reused support nullifier.
+    const existing = this.db
+      .prepare(
+        `SELECT value FROM ml_nullifiers WHERE kind = 'support' AND value = ?`,
+      )
+      .get(input.proof.nullifier) as { value: string } | undefined;
+    if (existing !== undefined) {
+      throw new Error('support nullifier already used');
+    }
+
+    // 6. Increment supportCount atomically and record the nullifier.
+    const now = new Date().toISOString();
+    const insertNullifier = this.db.prepare(
+      `INSERT INTO ml_nullifiers (kind, value) VALUES ('support', ?)`,
+    );
+
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE ml_complaints
+           SET support_count = support_count + 1, last_updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(now, complaintId);
+      insertNullifier.run(input.proof.nullifier);
+    });
+    transaction();
+
+    // 7. Read back the new support count and publish an event.
+    const updated = this.db
+      .prepare('SELECT support_count FROM ml_complaints WHERE id = ?')
+      .get(complaintId) as { support_count: number };
+    this.publishEvent({ type: 'complaint.supported', id: complaintId });
+
+    return { supportCount: updated.support_count };
   }
+
+  // ------------------------------------------------------------------
+  // Not yet implemented (M041-M047)
+  // ------------------------------------------------------------------
+
   updateStatus(): Promise<import('@usafe/shared').UpdateStatusResult> {
     throw new Error('updateStatus is not yet implemented (M041)');
   }
@@ -313,7 +404,7 @@ export class MockLedger implements LedgerAdapter {
   }
 
   // ------------------------------------------------------------------
-  // Not yet implemented (M040-M047)
+  // Not yet implemented (M041-M047)
   // ------------------------------------------------------------------
 
   // ------------------------------------------------------------------

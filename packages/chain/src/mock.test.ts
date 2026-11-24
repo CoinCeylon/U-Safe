@@ -350,4 +350,121 @@ describe('MockLedger (M037)', () => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('supportComplaint accepts a valid support, rejects duplicate nullifier, and rejects other university', async () => {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-2', 'Other University', 'other.ac.lk', 10);
+    const ledger = new MockLedger(db, {
+      publish: (event) => {
+        publishedEvents.push(event);
+      },
+    });
+
+    const publishedEvents: Array<{ type: string; id: string }> = [];
+
+    // Enroll a student at uni-1.
+    const secret = randomBytes(32);
+    const { hash, DOMAIN_TAG_COMMITMENT } = await import('@usafe/crypto');
+    const commitmentBytes = await hash(DOMAIN_TAG_COMMITMENT, secret);
+    const commitmentHex = Buffer.from(commitmentBytes).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const leafIndex = leaves.commitments.indexOf(commitmentHex);
+
+    // File a complaint at uni-1.
+    const complaintResult = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof: await (async () => {
+        const p = await proveMembershipMock(
+          secret,
+          leaves.commitments,
+          leafIndex,
+          `file|${yearMonth}|0`,
+        );
+        p.universityId = 'uni-1';
+        return p;
+      })(),
+    });
+    const complaintId = complaintResult.id;
+
+    // First support → accepted, count becomes 1.
+    const supportProof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      leafIndex,
+      `support|${complaintId}`,
+    );
+    supportProof.universityId = 'uni-1';
+
+    const result0 = await ledger.supportComplaint({
+      complaintId,
+      proof: supportProof,
+    });
+    expect(result0.supportCount).toBe(1);
+    expect(publishedEvents).toHaveLength(1);
+    expect(publishedEvents[0]!.type).toBe('complaint.supported');
+    expect(publishedEvents[0]!.id).toBe(complaintId);
+
+    // Same support nullifier again → rejected.
+    await expect(
+      ledger.supportComplaint({
+        complaintId,
+        proof: supportProof,
+      }),
+    ).rejects.toThrow('support nullifier already used');
+
+    // Count stays at 1 after the rejected duplicate.
+    const row = db
+      .prepare('SELECT support_count FROM ml_complaints WHERE id = ?')
+      .get(complaintId) as { support_count: number };
+    expect(row.support_count).toBe(1);
+
+    // Enroll a second student at uni-2.
+    const secret2 = randomBytes(32);
+    const commitmentBytes2 = await hash(DOMAIN_TAG_COMMITMENT, secret2);
+    const commitmentHex2 = Buffer.from(commitmentBytes2).toString('hex');
+
+    await ledger.enrollCommitment({
+      universityId: 'uni-2',
+      commitment: commitmentHex2,
+    });
+
+    const leaves2 = await ledger.getLeaves({ universityId: 'uni-2' });
+    const leafIndex2 = leaves2.commitments.indexOf(commitmentHex2);
+
+    // Proof from uni-2 student trying to support uni-1's complaint → rejected.
+    const otherProof = await proveMembershipMock(
+      secret2,
+      leaves2.commitments,
+      leafIndex2,
+      `support|${complaintId}`,
+    );
+    otherProof.universityId = 'uni-2';
+
+    await expect(
+      ledger.supportComplaint({
+        complaintId,
+        proof: otherProof,
+      }),
+    ).rejects.toThrow('proof university does not match complaint university');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
