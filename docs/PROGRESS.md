@@ -33,3 +33,4 @@ M032 | done | Staff auth added with challenge, signature-based login, hashed ses
 M033 | done | Added GET /api/events SSE hub with publish(event) broadcaster for id/type-only events
 M034 | done | Added privacy.test.ts scanning server source for forbidden logging patterns and verifying logger redaction
 M035 | done | Defined the LedgerAdapter interface and MembershipProof type in packages/chain with input/result types and zod schemas in packages/shared
+M036 | done | Added migration 003_mock_ledger.sql with ml_leaves, ml_roots, ml_complaints, ml_nullifiers, ml_history and ml_notes; verified it applies cleanly on a fresh database
