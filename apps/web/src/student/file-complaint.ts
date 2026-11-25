@@ -660,11 +660,18 @@ function renderSubmissionFlow(
         `Thank you. Your complaint ${complaintId} was filed with ` +
         `${input.evidenceFiles.length} evidence file(s) and starts at 0 supports. ` +
         'A receipt was saved in this browser only; clearing site data removes it.';
+      const links = document.createElement('p');
+      links.className = 'mt-1 flex flex-wrap gap-3';
       const link = document.createElement('a');
       link.href = `#/complaint/${encodeURIComponent(complaintId)}`;
-      link.className = 'mt-1 inline-block text-primary underline';
+      link.className = 'text-primary underline';
       link.textContent = 'View your complaint';
-      success.append(line, link);
+      const mine = document.createElement('a');
+      mine.href = '#/my-complaints';
+      mine.className = 'text-primary underline';
+      mine.textContent = 'Open My complaints';
+      links.append(link, mine);
+      success.append(line, links);
       area.append(success);
       toast('Your complaint was submitted.', 'success');
     } catch (error) {

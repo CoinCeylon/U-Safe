@@ -178,3 +178,18 @@ Record package names, versions and adaptations here.
   page on top of them. Non-staff-involved filed descriptions also feed the M059
   duplicate-suggestion cache via `rememberComplaintText`; staff-involved text never
   does.
+- M061's "per-file keys wrapped for the student themselves" are stored as raw base64
+  keys inside the receipt: `SecureStore` already encrypts every stored value with a
+  key derived from the student secret, and an extra AES wrap with the same root
+  secret would add no security. Only the receipts page can read them, and only
+  after the wallet re-derives the secret.
+- The My complaints page (`my-complaints.ts`) builds its list from local receipts
+  only; nothing on the page is stored or sent anywhere new. Statuses refresh through
+  the same public, proof-less `GET /api/complaints/:id?university=` endpoint the feed
+  and detail pages already use (no student identity is attached), triggered once on
+  load and then by `/api/events` SSE messages for receipt ids; the last observed
+  status is written back into the receipt so a reload starts from the latest state.
+  Evidence re-download (`evidenceDownload.ts`) reads blobs by their public hash,
+  verifies the SHA-256 against the receipt before decrypting, and shows
+  "Integrity verified" on success. The page states clearly that clearing site data
+  removes the receipts permanently and restoring the wallet does not bring them back.

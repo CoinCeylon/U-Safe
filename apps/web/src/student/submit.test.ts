@@ -352,6 +352,23 @@ describe('SubmissionPipeline (M060)', () => {
     const decrypted = await decryptFile(chunks, fileKey, imageBytes.length);
     expect(new TextDecoder().decode(decrypted)).toBe(imageBytes);
 
+    // M061: the receipt carries the per-file key (the student's own copy) so
+    // the student can re-download and decrypt their evidence without any
+    // role private key.
+    const receiptEvidence = receipts[0]?.evidence[0];
+    if (receiptEvidence === undefined) {
+      throw new Error('receipt evidence missing');
+    }
+    expect(receiptEvidence.hash).toBe(photo.hash);
+    expect(base64ToBytes(receiptEvidence.fileKey)).toHaveLength(32);
+    const studentChunks: EncryptedChunk[] = parseEncryptedChunks(blobBytes!);
+    const studentBytes = await decryptFile(
+      studentChunks,
+      base64ToBytes(receiptEvidence.fileKey),
+      imageBytes.length,
+    );
+    expect(new TextDecoder().decode(studentBytes)).toBe(imageBytes);
+
     // The student's own text feeds the duplicate-suggestion cache.
     expect(localStorage.getItem(`usafe-complaint-text-${UNIVERSITY_ID}`)).toContain(
       input.description,

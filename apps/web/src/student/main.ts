@@ -5,6 +5,7 @@ import { fetchUniversities, renderWizard } from './wizard';
 import { renderFileComplaintForm } from './file-complaint';
 import { renderFeed } from './feed';
 import { renderDetail } from './detail';
+import { renderMyComplaints } from './my-complaints';
 import { getStudentSecret } from './unlock';
 import { getRememberedUniversity } from './session';
 import { ensureUnlocked } from './session';
@@ -22,6 +23,7 @@ const portalFrame = createFrame({
     { label: 'Home', path: '/' },
     { label: 'Community feed', path: '/feed' },
     { label: 'File a complaint', path: '/file-complaint' },
+    { label: 'My complaints', path: '/my-complaints' },
   ],
 });
 
@@ -96,6 +98,12 @@ router.register('/complaint/:id', (params) => {
 router.register('/file-complaint', () => {
   const section = document.createElement('section');
   renderFileComplaintForm(section);
+  return section;
+});
+
+router.register('/my-complaints', () => {
+  const section = document.createElement('section');
+  void renderMyComplaints(section);
   return section;
 });
 

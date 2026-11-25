@@ -1,12 +1,18 @@
-// Filing receipts (submission pipeline, M060).
+// Filing receipts (submission pipeline M060, receipts page M061).
 //
 // Each submitted complaint stores a local receipt, encrypted with the student
 // secret in SecureStore (IndexedDB). Nothing here is sent to the server; the
-// receipt lets the student recognise their own complaints later (the "My
-// complaints" page is M061) and keeps a copy of what was filed.
+// receipt lets the student recognise their own complaints later and
+// re-download their own evidence.
 //
-// The receipt deliberately contains no unwrapped evidence keys. M061 extends
-// it with per-file keys wrapped for the student themselves.
+// "Per-file keys wrapped for the student themselves" (M061): the per-file
+// AES keys are stored inside this receipt, and SecureStore encrypts every
+// value with a key derived from the student secret — that is the wrapping
+// layer for the student. An extra AES wrap with the same root secret would
+// add no security.
+//
+// The receipt never contains unwrapped evidence *content*, only keys and
+// public blob hashes.
 
 import { IndexedDbStorage, SecureStore, type SecureStore as Store } from '@usafe/crypto';
 import { getStudentSecret } from './unlock';
@@ -16,6 +22,8 @@ export interface FilingEvidenceInfo {
   name: string;
   type: string;
   size: number;
+  /** Per-file AES-256 key, base64. Only readable via the student secret. */
+  fileKey: string;
 }
 
 export interface FilingReceipt {
@@ -29,6 +37,10 @@ export interface FilingReceipt {
   filedAt: string;
   description: string;
   evidence: FilingEvidenceInfo[];
+  /** Last status seen on the live feed; updated via SSE events. */
+  lastStatus?: string;
+  /** Set when the complaint was seen as escalated. */
+  escalated?: boolean;
 }
 
 const STORE_KEY = 'filings';
@@ -81,4 +93,36 @@ export async function saveFilingReceipt(
   }
   receipts.push(receipt);
   await opened.put(STORE_KEY, JSON.stringify(receipts));
+}
+
+/**
+ * Records the latest observed status of a filed complaint so a reload of the
+ * My complaints page starts from the last known state.
+ */
+export async function updateFilingStatus(
+  complaintId: string,
+  patch: { lastStatus?: string; escalated?: boolean },
+  store?: Store,
+): Promise<void> {
+  const opened = store ?? openStore();
+  const receipts = await loadFilingReceipts(opened);
+  const receipt = receipts.find((entry) => entry.complaintId === complaintId);
+  if (receipt === undefined) {
+    return;
+  }
+  if (patch.lastStatus !== undefined) {
+    receipt.lastStatus = patch.lastStatus;
+  }
+  if (patch.escalated !== undefined) {
+    receipt.escalated = patch.escalated;
+  }
+  await opened.put(STORE_KEY, JSON.stringify(receipts));
+}
+
+/** Returns the receipts newest first (by filedAt). */
+export function sortReceiptsNewestFirst(receipts: FilingReceipt[]): FilingReceipt[] {
+  return [...receipts].sort(
+    (a, b) =>
+      new Date(b.filedAt).getTime() - new Date(a.filedAt).getTime(),
+  );
 }

@@ -551,6 +551,8 @@ export class SubmissionPipeline {
     });
 
     // 8. Store the encrypted receipt locally and feed the duplicate cache.
+    //    The receipt carries each per-file key (the student's own copy);
+    //    SecureStore encrypts the whole receipt with the student secret.
     const receipt: FilingReceipt = {
       complaintId,
       universityId: this.input.universityId,
@@ -561,11 +563,12 @@ export class SubmissionPipeline {
       payloadLocator: payloadBlob.blobHash,
       filedAt: this.now().toISOString(),
       description: this.input.description,
-      evidence: (this.manifest ?? []).map((entry) => ({
+      evidence: [...this.encrypted.values()].map((entry) => ({
         hash: entry.hash,
         name: entry.name,
         type: entry.type,
         size: entry.size,
+        fileKey: bytesToBase64(entry.key),
       })),
     };
     await step('receipt', async () => {
