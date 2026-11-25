@@ -13,6 +13,7 @@ import {
 import { createLoginView } from './login';
 import { canAccess, ruleForPath, rulesForRole } from './roles';
 import { renderKeySetup } from './keySetup';
+import { renderCommunityKey } from './communityKey';
 import { getLoadedRoleKey } from './staffKeys';
 
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -162,6 +163,19 @@ const keySetupView = (): HTMLElement => {
   return section;
 };
 
+const communityKeyView = (): HTMLElement => {
+  const section = document.createElement('section');
+  if (session === null) {
+    return loginView();
+  }
+  const active = session;
+  const rerender = (): void => {
+    router.navigate(router.currentPath());
+  };
+  void renderCommunityKey(section, { session: active, onChanged: rerender });
+  return section;
+};
+
 const keyLockedView = (): HTMLElement => {
   const section = document.createElement('section');
   section.className = 'mx-auto flex w-full max-w-md flex-col gap-3';
@@ -203,6 +217,10 @@ router.register(
   ),
 );
 router.register('/keys', guarded('/keys', keySetupView));
+router.register(
+  '/community-key',
+  guarded('/community-key', communityKeyView),
+);
 
 buildHeaderControls();
 buildNav();

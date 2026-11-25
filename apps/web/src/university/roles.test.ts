@@ -51,7 +51,16 @@ describe('M063 university role guards', () => {
       '/complaints',
       '/roster',
       '/keys',
+      '/community-key',
     ]);
+  });
+
+  it('opens the community key screen to admins only', () => {
+    const communityKey = ruleForPath('/community-key');
+    expect(communityKey).not.toBeNull();
+    expect(canAccess('admin', communityKey?.roles ?? [])).toBe(true);
+    expect(canAccess('registrar', communityKey?.roles ?? [])).toBe(false);
+    expect(canAccess('investigator', communityKey?.roles ?? [])).toBe(false);
   });
 
   it('returns null for unknown paths', () => {
