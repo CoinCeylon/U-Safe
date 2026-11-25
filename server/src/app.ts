@@ -26,6 +26,11 @@ import {
 } from './services/ledger.js';
 import { clientIp } from './services/clientIp.js';
 import { addClient, publish, removeClient } from './services/events.js';
+import {
+  CommunityKeyError,
+  deliverCommunityKey,
+  getUgcPublicKeyJwk,
+} from './services/communityKey.js';
 import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
   createChallenge,
@@ -733,6 +738,42 @@ export const buildApp = async (
       }
     },
   );
+
+  // Community key delivery to enrolled students (M060). Only a caller with a
+  // valid membership proof receives the key; the proof is verified and then
+  // discarded, and the key itself is never logged.
+  app.post<{ Params: { id: string } }>(
+    '/api/universities/:id/community-key',
+    { preHandler: enrollmentProof },
+    async (request, reply) => {
+      try {
+        const communityKey = await deliverCommunityKey(
+          db,
+          request.params.id,
+          config.COMMUNITY_DELIVERY_SECRET,
+        );
+        return { communityKey };
+      } catch (error) {
+        if (error instanceof CommunityKeyError) {
+          reply.code(error.statusCode);
+          return { error: error.message };
+        }
+        throw error;
+      }
+    },
+  );
+
+  // The UGC public key is public knowledge: students wrap staff-involved
+  // payload and evidence keys for it (M060), universities wrap community
+  // keys for it (M065).
+  app.get('/api/ugc/public-key', async (_request, reply) => {
+    const publicKeyJwk = getUgcPublicKeyJwk(db);
+    if (publicKeyJwk === null) {
+      reply.code(404);
+      return { error: 'ugc public key not registered' };
+    }
+    return { publicKeyJwk };
+  });
 
   app.get('/api/events', (request, reply) => {
     reply.hijack();

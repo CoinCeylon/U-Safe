@@ -6,6 +6,8 @@ import {
   encryptFile,
   decryptFile,
   FILE_CHUNK_BYTES,
+  serializeEncryptedChunks,
+  parseEncryptedChunks,
 } from './file';
 
 const enc = new TextEncoder();
@@ -327,5 +329,59 @@ describe('encryptFile / decryptFile', () => {
     expect(result.chunks.length).toBe(Math.ceil(size / FILE_CHUNK_BYTES));
     expect(result.totalBytes).toBe(size);
     expect(result.key).toHaveLength(32);
+  });
+});
+
+describe('serializeEncryptedChunks / parseEncryptedChunks', () => {
+  it('round-trips chunks through the framed blob format', async () => {
+    const contents = enc.encode('frame round trip');
+    const file = new FakeFile([contents], 'frame.bin');
+    const { chunks, key, totalBytes } = await encryptFile(file);
+
+    const framed = serializeEncryptedChunks(chunks);
+    const parsed = parseEncryptedChunks(framed);
+
+    expect(framed.subarray(0, 4)).toEqual(enc.encode('USF1'));
+    expect(parsed).toHaveLength(chunks.length);
+    const decrypted = await decryptFile(parsed, key, totalBytes);
+    expect(decrypted).toEqual(contents);
+  });
+
+  it('rejects an empty chunk list', () => {
+    expect(() => serializeEncryptedChunks([])).toThrow('empty');
+  });
+
+  it('rejects a frame without the magic bytes', () => {
+    const contents = enc.encode('magic');
+    const file = new FakeFile([contents], 'magic.bin');
+    void file; // framing is tested on a synthetic buffer below
+
+    const bogus = new Uint8Array(16);
+    expect(() => parseEncryptedChunks(bogus)).toThrow('unknown');
+  });
+
+  it('rejects a truncated frame body', async () => {
+    const contents = enc.encode('truncate');
+    const file = new FakeFile([contents], 'truncate.bin');
+    const { chunks } = await encryptFile(file);
+    const framed = serializeEncryptedChunks(chunks);
+
+    const truncated = framed.subarray(0, framed.length - 1);
+    expect(() => parseEncryptedChunks(truncated)).toThrow('truncated');
+  });
+
+  it('rejects a frame with trailing bytes', async () => {
+    const contents = enc.encode('trailing');
+    const file = new FakeFile([contents], 'trailing.bin');
+    const { chunks } = await encryptFile(file);
+    const framed = serializeEncryptedChunks(chunks);
+
+    const padded = new Uint8Array(framed.length + 1);
+    padded.set(framed);
+    expect(() => parseEncryptedChunks(padded)).toThrow('trailing');
+  });
+
+  it('rejects a frame shorter than its header', () => {
+    expect(() => parseEncryptedChunks(new Uint8Array(4))).toThrow('too short');
   });
 });

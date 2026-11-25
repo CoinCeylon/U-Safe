@@ -141,3 +141,40 @@ Record package names, versions and adaptations here.
   instead of rebuilding the step DOM. Rebuilding on every keystroke replaced the
   focused field and made students type only one character at a time. Navigation
   validity is refreshed separately; full re-renders remain only for step/status changes.
+- M060 adds the community-key delivery route `POST /api/universities/:id/community-key`
+  (behind `requireEnrollmentProof`) and `GET /api/ugc/public-key`. The delivery route
+  unwraps `universities.community_key_wrapped_for_delivery` with
+  `COMMUNITY_DELIVERY_SECRET` (added to the server config) and returns the raw key over
+  TLS, matching the documented limitation that "students receive the community key from
+  the server". M065's key-creation flow will keep feeding the same column, so this route
+  stays unchanged then. The delivery request uses a mock membership proof with context
+  `support|community-key-delivery` (nullifier bound to that fixed pseudo id): the server
+  verifies membership and discards the proof, so no filing or support slot is consumed.
+- The sealed payload blob is a small JSON envelope (`apps/web/src/lib/sealedEnvelope.ts`)
+  with `kind` `community` (open with the university community key) or `ugc-only`
+  (staff-involved). The ledger's `payloadHash`/`payloadLocator` are the SHA-256 of the
+  envelope bytes. The "UGC-only key" of M043/M078 is a fresh random AES-256 key the
+  complainant's browser generates per complaint; its copy wrapped for the UGC public key
+  rides inside the envelope as `sealedKeyWrapped`, so only the UGC can ever read the
+  payload. This keeps the UGC portal (M078) implementable without any new delivery
+  channel.
+- Staff-involved evidence per-file keys are wrapped for the UGC public key only, not the
+  university's, because specification section 6 (staff involvement) states such evidence
+  "is encrypted for the UGC only" and M066 never gives university staff a detail view of
+  these complaints. Normal complaints wrap each file key for both the university and UGC
+  public keys. The M060 milestone text is ambiguous here; the specification resolves it.
+- Encrypted evidence blobs use a small binary framing (`serializeEncryptedChunks` in
+  `@usafe/crypto`): magic `USF1`, a little-endian chunk count, then per chunk a length
+  prefix and `iv || ciphertext`. This keeps the 1 MB chunking of `encryptFile` intact so
+  M067 can decrypt streamed, chunk by chunk.
+- The submission pipeline (`apps/web/src/student/submit.ts`) keeps encrypted artifacts
+  and uploaded blob hashes per pipeline instance, so a retry resumes from the failed step
+  and never re-uploads a blob. Known edge case, accepted for mock mode: if the filing
+  request reaches the ledger but the response is lost, a retry burns the second monthly
+  slot and can create a second complaint, because the client cannot know the first
+  filing succeeded. The two-slot monthly limit still prevents a third copy.
+- Filing receipts are stored through `SecureStore` (IndexedDB, encrypted with the
+  student secret) in `apps/web/src/student/filings.ts`; M061 builds the "My complaints"
+  page on top of them. Non-staff-involved filed descriptions also feed the M059
+  duplicate-suggestion cache via `rememberComplaintText`; staff-involved text never
+  does.

@@ -125,6 +125,113 @@ export async function encryptFile(file: FileLike): Promise<{
   return { chunks, key, totalBytes };
 }
 
+// ---------------------------------------------------------------------------
+// Serialized encrypted-file format (submission pipeline, M060)
+// ---------------------------------------------------------------------------
+//
+// Encrypted files are uploaded as single blobs. The serialized format packs
+// the chunk list produced by `encryptFile` into a self-describing byte
+// sequence so a reader can stream the chunks back out one at a time:
+//
+//   bytes 0..3    magic "USF1" (format id and version)
+//   bytes 4..7    chunk count, unsigned 32-bit little-endian
+//   then per chunk: 4-byte LE byte length followed by `iv || ciphertext`
+//
+// Nothing in the frame is secret: the chunks are already AES-256-GCM
+// encrypted and authenticated, so tampering is detected on decrypt.
+
+export const ENCRYPTED_FILE_MAGIC = 'USF1';
+
+function littleEndian32(value: number): Uint8Array {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new Error('value does not fit in an unsigned 32-bit integer');
+  }
+  return new Uint8Array([value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff]);
+}
+
+// Serializes encrypted chunks into the framed blob format above.
+export function serializeEncryptedChunks(chunks: EncryptedChunk[]): Uint8Array {
+  if (chunks.length === 0) {
+    throw new Error('cannot serialize an empty chunk list');
+  }
+  for (const chunk of chunks) {
+    if (chunk.data.length === 0) {
+      throw new Error(`chunk ${chunk.index} is empty`);
+    }
+  }
+
+  const encoder = new TextEncoder();
+  const magic = encoder.encode(ENCRYPTED_FILE_MAGIC);
+  const total =
+    magic.length +
+    4 +
+    chunks.reduce((sum, chunk) => sum + 4 + chunk.data.length, 0);
+  const out = new Uint8Array(total);
+
+  let offset = 0;
+  out.set(magic, offset);
+  offset += magic.length;
+  out.set(littleEndian32(chunks.length), offset);
+  offset += 4;
+
+  // Chunk order in the frame is the chunk order of the list; `decryptFile`
+  // sorts by index anyway, so a re-ordered but complete frame still decrypts.
+  for (const chunk of chunks) {
+    out.set(littleEndian32(chunk.data.length), offset);
+    offset += 4;
+    out.set(chunk.data, offset);
+    offset += chunk.data.length;
+  }
+  return out;
+}
+
+// Parses a framed blob back into its encrypted chunks, validating the magic
+// byte, the declared chunk count and every declared chunk length. Throws on
+// truncated, oversized or malformed input.
+export function parseEncryptedChunks(bytes: Uint8Array): EncryptedChunk[] {
+  const decoder = new TextDecoder();
+  const headerSize = 4 + 4;
+  if (bytes.length < headerSize) {
+    throw new Error('serialized file too short for a header');
+  }
+
+  const magic = decoder.decode(bytes.subarray(0, 4));
+  if (magic !== ENCRYPTED_FILE_MAGIC) {
+    throw new Error('unknown serialized file format');
+  }
+
+  const chunkCount =
+    (bytes[4]! | (bytes[5]! << 8) | (bytes[6]! << 16) | (bytes[7]! << 24)) >>> 0;
+  if (chunkCount === 0) {
+    throw new Error('serialized file declares no chunks');
+  }
+
+  const chunks: EncryptedChunk[] = [];
+  let offset = headerSize;
+  for (let index = 0; index < chunkCount; index += 1) {
+    if (offset + 4 > bytes.length) {
+      throw new Error(`serialized file truncated in chunk ${index} header`);
+    }
+    const length =
+      (bytes[offset]! |
+        (bytes[offset + 1]! << 8) |
+        (bytes[offset + 2]! << 16) |
+        (bytes[offset + 3]! << 24)) >>>
+      0;
+    offset += 4;
+    if (length === 0 || offset + length > bytes.length) {
+      throw new Error(`serialized file truncated in chunk ${index} body`);
+    }
+    chunks.push({ index, data: bytes.subarray(offset, offset + length) });
+    offset += length;
+  }
+
+  if (offset !== bytes.length) {
+    throw new Error('serialized file has trailing bytes');
+  }
+  return chunks;
+}
+
 // Decrypts chunks produced by `encryptFile` back into the original file
 // bytes, in order. Verifies each chunk's GCM auth tag; throws if any chunk
 // was tampered with.

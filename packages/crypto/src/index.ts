@@ -27,12 +27,15 @@ export {
   GCM_IV_SIZE,
   AES_KEY_SIZE,
   GCM_TAG_SIZE,
+  ENCRYPTED_FILE_MAGIC,
   deriveFileKey,
   encryptBytes,
   decryptBytes,
   type EncryptedChunk,
   encryptFile,
   decryptFile,
+  serializeEncryptedChunks,
+  parseEncryptedChunks,
 } from './file';
 export {
   RSA_KEY_SIZE,
