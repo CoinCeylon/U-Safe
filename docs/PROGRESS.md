@@ -62,3 +62,4 @@ M056 | done | Anonymous support flow: unlock on demand, locally built mock proof
 M057 | done | File complaint form with 40–4000 character validation, category, urgency, staff-involved toggle, optional accused details, privacy guidance and filing slots
 
 M058 | done | Evidence attachment picker with up to 5 files, 25 MB each, previews, metadata stripping for images, metadata acknowledgement, and clear rejection messages
+M059 | done | Duplicate suggestions: browser-side token-overlap comparison of the typed description with open same-university complaints (threshold 0.5, top 3) surfacing a "Support this one instead" link, with complaint text cached locally in complaint-text.ts until M060/M065 make sealed payload text readable

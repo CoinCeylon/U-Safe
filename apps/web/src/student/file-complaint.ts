@@ -1,10 +1,14 @@
-// Student file complaint form (M057/M058).
+// Student file complaint form (M057/M058/M059).
 //
 // M057: mandatory description (40-4000 characters), category, urgency, staff
 // involvement, optional accused details and plain-language guidance.
 // M058: evidence picker with up to 5 files of 25 MB each. Images are stripped
 // with stripImage; videos, audio and documents keep their metadata, so the
 // form asks for an acknowledgement before those can be attached.
+// M059: while the description is typed (and once more before submit), the
+// form compares it with the open complaints of the same university in the
+// browser. Close matches above the token-overlap threshold are shown with a
+// "Support this one instead" link so support is not split across duplicates.
 //
 // Submission is still a placeholder: the submission pipeline is M060.
 
@@ -19,6 +23,9 @@ import {
   type EvidenceKind,
   type EvidenceRejection,
 } from './evidence';
+import { getRememberedUniversity } from './session';
+import { loadOpenComplaintTexts, type OpenComplaintText } from './complaint-text';
+import { findSimilarComplaints, MAX_DUPLICATE_SUGGESTIONS } from './similar';
 
 export interface FileComplaintInput {
   description: string;
@@ -113,6 +120,72 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
     'w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-light';
   descriptionInput.placeholder = 'Describe what happened (minimum 40 characters)';
   form.append(descriptionLabel, descriptionInput);
+
+  // ---- Duplicate suggestions (M059) ----
+  // Surfaced while the student types, and refreshed before the final submit
+  // step. The comparison runs entirely in the browser against descriptions
+  // the portal has cached locally; nothing typed here is sent anywhere.
+  const suggestionsBox = document.createElement('div');
+  suggestionsBox.className = 'hidden flex-col gap-2 rounded-md border border-warning bg-warning-light p-3';
+  form.append(suggestionsBox);
+
+  let openTexts: OpenComplaintText[] = [];
+  const rememberedUniversity = getRememberedUniversity();
+  if (rememberedUniversity !== null) {
+    void loadOpenComplaintTexts(rememberedUniversity).then((texts) => {
+      openTexts = texts;
+      updateSuggestions();
+    });
+  }
+
+  function updateSuggestions(): void {
+    const description = descriptionInput.value.trim();
+    if (description.length < 40 || openTexts.length === 0) {
+      suggestionsBox.replaceChildren();
+      suggestionsBox.classList.add('hidden');
+      return;
+    }
+
+    const similar = findSimilarComplaints(description, openTexts);
+    if (similar.length === 0) {
+      suggestionsBox.replaceChildren();
+      suggestionsBox.classList.add('hidden');
+      return;
+    }
+
+    suggestionsBox.replaceChildren();
+    const intro = document.createElement('p');
+    intro.className = 'text-sm font-medium text-slate-800';
+    intro.textContent =
+      'This sounds similar to an open complaint. Supporting the existing one keeps support together instead of splitting it.';
+    suggestionsBox.append(intro);
+
+    for (const complaint of similar.slice(0, MAX_DUPLICATE_SUGGESTIONS)) {
+      const row = document.createElement('div');
+      row.className = 'flex flex-wrap items-center justify-between gap-2 text-sm';
+      const info = document.createElement('p');
+      info.className = 'text-slate-700';
+      info.textContent =
+        `Complaint ${complaint.id} · ${titleCase(complaint.category)} · ` +
+        `${complaint.supportCount} ${complaint.supportCount === 1 ? 'support' : 'supports'}`;
+      const instead = document.createElement('a');
+      instead.href = `#/complaint/${encodeURIComponent(complaint.id)}`;
+      instead.className =
+        'rounded-md border border-primary bg-white px-3 py-2 text-sm font-medium text-primary hover:bg-primary-light';
+      instead.textContent = 'Support this one instead';
+      row.append(info, instead);
+      suggestionsBox.append(row);
+    }
+    suggestionsBox.classList.remove('hidden');
+  }
+
+  let suggestionTimer: ReturnType<typeof setTimeout> | undefined;
+  descriptionInput.addEventListener('input', () => {
+    if (suggestionTimer !== undefined) {
+      clearTimeout(suggestionTimer);
+    }
+    suggestionTimer = setTimeout(updateSuggestions, 600);
+  });
 
   const categoryLabel = document.createElement('label');
   categoryLabel.htmlFor = 'complaint-category';
@@ -352,6 +425,9 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    // One final comparison before the submit step continues (M059), so a
+    // suggestion that arrived with the corpus load is never missed.
+    updateSuggestions();
     const description = descriptionInput.value.trim();
     if (description.length < 40) {
       showErrors([{ name: 'Description', reason: 'Write at least 40 characters.' }]);
@@ -402,4 +478,8 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
 
 export function formatFileSize(bytes: number): string {
   return `(${formatBytes(bytes)})`;
+}
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).replace('_', ' ');
 }

@@ -121,6 +121,22 @@ Record package names, versions and adaptations here.
   corrupt or canvas re-encoding fails, the original file is kept and the file is treated
   like a video/document: the metadata acknowledgement checkbox becomes required. A
   failed strip must not break the form or silently claim that metadata was removed.
+- M059 must compare a new description with "the open complaints of the same university"
+  in the browser, but at this point no description text is readable anywhere: the server
+  may never hold plaintext complaint text (locked rule), sealed payloads arrive with the
+  M060 submission pipeline, and community-key delivery to students is M065. The chosen
+  design keeps the real engine and UI now and a clearly-marked corpus source: the
+  comparison runs against descriptions the portal has legitimately read, kept in a
+  per-university localStorage cache (`complaint-text.ts`, max 30 entries, finished and
+  UGC-owned complaints excluded). M060 should cache the student's own filed text and the
+  community-key feed work should cache decrypted text by calling `rememberComplaintText`;
+  the suggestion box lights up as soon as those writers exist. The score is the Jaccard
+  token overlap after stopword removal; matches must be strictly above 0.5, at most three
+  are shown, and "Support this one instead" links to the existing complaint detail page
+  (the full support flow of M056 already lives there) rather than re-implementing the
+  queued support submission inside the form. Suggestions update debounced (600 ms) while
+  typing and once more at submit; they never block filing, because a similar complaint
+  can still be a distinct incident.
 - The enrolment wizard updates state in place on `input` events (`onChange(next, false)`)
   instead of rebuilding the step DOM. Rebuilding on every keystroke replaced the
   focused field and made students type only one character at a time. Navigation
