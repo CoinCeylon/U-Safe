@@ -12,6 +12,8 @@ import {
 } from './auth';
 import { createLoginView } from './login';
 import { canAccess, ruleForPath, rulesForRole } from './roles';
+import { renderKeySetup } from './keySetup';
+import { getLoadedRoleKey } from './staffKeys';
 
 const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) {
@@ -133,6 +135,13 @@ const homeView = (): HTMLElement => {
       const text = document.createElement('p');
       text.className = 'text-sm text-slate-600';
       text.textContent = `Role: ${session.staff.role}. University: ${session.staff.universityId ?? 'not assigned'}. Use the navigation on the left.`;
+      const keyStatus = document.createElement('p');
+      keyStatus.className = 'text-sm text-slate-600';
+      keyStatus.textContent =
+        getLoadedRoleKey() !== null
+          ? 'University key: loaded in this tab.'
+          : 'University key: not loaded yet. Open Keys to load it.';
+      text.append(document.createElement('br'), keyStatus);
       return text;
     })(),
   );
@@ -140,15 +149,52 @@ const homeView = (): HTMLElement => {
   return section;
 };
 
+const keySetupView = (): HTMLElement => {
+  const section = document.createElement('section');
+  if (session === null) {
+    return loginView();
+  }
+  const active = session;
+  const rerender = (): void => {
+    router.navigate(router.currentPath());
+  };
+  void renderKeySetup(section, { session: active, onChanged: rerender });
+  return section;
+};
+
+const keyLockedView = (): HTMLElement => {
+  const section = document.createElement('section');
+  section.className = 'mx-auto flex w-full max-w-md flex-col gap-3';
+  const heading = document.createElement('h2');
+  heading.className = 'text-xl font-semibold text-slate-900';
+  heading.textContent = 'University key required';
+  const text = document.createElement('p');
+  text.className = 'text-sm text-slate-600';
+  text.textContent =
+    'Complaint pages stay locked until the university private key is loaded in this tab, because complaint payloads are sealed with it.';
+  const toKeys = button({
+    label: 'Open key setup',
+    onClick: () => {
+      router.navigate('/keys');
+    },
+  });
+  section.append(heading, text, toKeys);
+  return section;
+};
+
 router.register('/', guarded('/', homeView));
 router.register(
   '/complaints',
-  guarded('/complaints', () =>
-    placeholder(
+  guarded('/complaints', () => {
+    // M064: complaint pages are blocked until a private key is loaded.
+    if (getLoadedRoleKey() === null) {
+      return keyLockedView();
+    }
+    return placeholder(
       'Complaints',
       'Complaints dashboard arrives in a later milestone.',
-    ),
-  ),
+    );
+  }),
 );
 router.register(
   '/roster',
@@ -156,12 +202,7 @@ router.register(
     placeholder('Roster', 'Roster tools arrive in a later milestone.'),
   ),
 );
-router.register(
-  '/keys',
-  guarded('/keys', () =>
-    placeholder('Keys', 'Key management arrives in a later milestone.'),
-  ),
-);
+router.register('/keys', guarded('/keys', keySetupView));
 
 buildHeaderControls();
 buildNav();

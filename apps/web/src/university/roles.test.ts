@@ -39,10 +39,12 @@ describe('M063 university role guards', () => {
     expect(rulesForRole('investigator').map((rule) => rule.path)).toEqual([
       '/',
       '/complaints',
+      '/keys',
     ]);
     expect(rulesForRole('registrar').map((rule) => rule.path)).toEqual([
       '/',
       '/roster',
+      '/keys',
     ]);
     expect(rulesForRole('admin').map((rule) => rule.path)).toEqual([
       '/',

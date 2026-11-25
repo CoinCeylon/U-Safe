@@ -298,6 +298,54 @@ export const buildApp = async (
     },
   );
 
+  // M064: staff registers the university RSA public key after the role key
+  // setup flow. Only staff of that university may set it; the JWK must be a
+  // public RSA key (no private components).
+  const publicKeySchema = z.object({ publicKeyJwk: z.string().min(1) });
+  app.put<{ Params: { id: string } }>(
+    '/api/university/:id/public-key',
+    { preHandler: requireStaff() },
+    (request, reply) => {
+      const staff = request.staff;
+      if (
+        staff === undefined ||
+        staff.university_id === null ||
+        staff.university_id !== request.params.id
+      ) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      const parsed = publicKeySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      let jwk: JsonWebKey;
+      try {
+        jwk = JSON.parse(parsed.data.publicKeyJwk) as JsonWebKey;
+      } catch {
+        reply.code(400);
+        return { error: 'invalid public key' };
+      }
+      if (
+        jwk.kty !== 'RSA' ||
+        typeof jwk.n !== 'string' ||
+        typeof jwk.e !== 'string' ||
+        'd' in jwk
+      ) {
+        reply.code(400);
+        return { error: 'invalid public key' };
+      }
+
+      db.prepare(
+        'UPDATE universities SET public_key_jwk = ? WHERE id = ?',
+      ).run(parsed.data.publicKeyJwk, request.params.id);
+      return { ok: true };
+    },
+  );
+
   app.post('/api/otp/request', async (request, reply) => {
     const parsed = otpRequestSchema.safeParse(request.body);
     if (!parsed.success) {

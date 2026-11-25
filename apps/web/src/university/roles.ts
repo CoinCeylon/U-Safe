@@ -6,6 +6,10 @@
  * - registrar: roster and enrollment
  * - investigator: complaints and status
  * - admin: everything, plus keys
+ *
+ * M064 opens `/keys` (role key setup) to every role, because investigators
+ * need the university private key loaded before complaint pages open. The
+ * community key admin screen (M065) will be a separate admin-only route.
  */
 
 export type StaffRole = 'registrar' | 'investigator' | 'admin';
@@ -33,7 +37,7 @@ export const ROUTE_RULES: readonly RouteRoleRule[] = [
     roles: ['investigator', 'admin'],
   },
   { path: '/roster', label: 'Roster', roles: ['registrar', 'admin'] },
-  { path: '/keys', label: 'Keys', roles: ['admin'] },
+  { path: '/keys', label: 'Keys', roles: STAFF_ROLES },
 ];
 
 /** Returns the rule for an exact path, or null when the path is unknown. */

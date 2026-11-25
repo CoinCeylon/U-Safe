@@ -63,3 +63,4 @@ M057 | done | File complaint form with 40–4000 character validation, category,
 
 M058 | done | Evidence attachment picker with up to 5 files, 25 MB each, previews, metadata stripping for images, metadata acknowledgement, and clear rejection messages
 M063 | done | University staff login with CIP-8 wallet sign-in and dev dropdown, sessionStorage token, seeded registrar/investigator/admin accounts, role-guarded routes, logout and access-denied views
+M064 | done | Role key setup: import a .dev-keys backup or generate an RSA-OAEP pair, passphrase-protected storage in IndexedDB, mandatory backup download, PUT /api/university/:id/public-key registration, complaint pages blocked until the key is unlocked
