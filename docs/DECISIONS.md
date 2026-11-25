@@ -125,3 +125,18 @@ Record package names, versions and adaptations here.
   instead of rebuilding the step DOM. Rebuilding on every keystroke replaced the
   focused field and made students type only one character at a time. Navigation
   validity is refreshed separately; full re-renders remain only for step/status changes.
+- M063 dev login: `POST /api/auth/dev-login` now prefers an explicit `staffId`
+  from the dropdown and falls back to the older `{role, universityId}` form from
+  M032. The new `GET /api/auth/dev-accounts` (both gated on `DEV_LOGIN=true`)
+  lists seeded staff rows joined with university names; `/api/health` reports a
+  `devLogin` flag so the portal shows the red "development login" section only
+  when the server enables it. `npm run seed` seeds one registrar, one
+  investigator and one admin per demo university with placeholder addresses
+  (`dev-<role>-<university>`), idempotently by address check. The staff session
+  token lives in `sessionStorage` only. Role guards are client-side route rules
+  in `university/roles.ts` (`/complaints` investigator+admin, `/roster`
+  registrar+admin, `/keys` admin) verified by unit tests; server-side route
+  authorization continues to use the M032 `requireStaff` hook.
+- The root `node_modules/vite` had drifted to 8.3.8 while the lockfile pins
+  6.4.6, which broke `tsc -p apps/web`. `npm ci` restored the locked tree
+  (`npm install` needs `--legacy-peer-deps`, see above).

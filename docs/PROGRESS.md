@@ -62,3 +62,4 @@ M056 | done | Anonymous support flow: unlock on demand, locally built mock proof
 M057 | done | File complaint form with 40–4000 character validation, category, urgency, staff-involved toggle, optional accused details, privacy guidance and filing slots
 
 M058 | done | Evidence attachment picker with up to 5 files, 25 MB each, previews, metadata stripping for images, metadata acknowledgement, and clear rejection messages
+M063 | done | University staff login with CIP-8 wallet sign-in and dev dropdown, sessionStorage token, seeded registrar/investigator/admin accounts, role-guarded routes, logout and access-denied views

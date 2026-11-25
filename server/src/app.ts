@@ -30,6 +30,8 @@ import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
   createChallenge,
   devLogin,
+  devLoginByStaffId,
+  listDevAccounts,
   loginWithSignature,
   requireStaff,
   staffOwnerRole,
@@ -231,6 +233,7 @@ export const buildApp = async (
   app.get('/api/health', () => ({
     ok: true,
     mode: config.CHAIN_MODE,
+    devLogin: process.env.DEV_LOGIN === 'true',
   }));
 
   app.get('/api/universities', () => {
@@ -457,14 +460,38 @@ export const buildApp = async (
   });
 
   if (process.env.DEV_LOGIN === 'true') {
-    app.post('/api/auth/dev-login', (request) => {
-      const body = (request.body ?? {}) as {
-        role?: string;
-        universityId?: string | null;
-      };
+    // Dev-only dropdown of seeded staff accounts for the M063 login page.
+    app.get('/api/auth/dev-accounts', () => ({
+      accounts: listDevAccounts(db),
+    }));
+
+    const devLoginSchema = z.object({
+      staffId: z.number().int().positive().optional(),
+      role: z.string().min(1).optional(),
+      universityId: z.string().min(1).nullish(),
+    });
+
+    app.post('/api/auth/dev-login', (request, reply) => {
+      const parsed = devLoginSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      // Prefer an explicit staffId from the dropdown; fall back to the
+      // older role-based form used by earlier milestones and tests.
+      if (parsed.data.staffId !== undefined) {
+        const token = devLoginByStaffId(db, parsed.data.staffId);
+        if (token === null) {
+          reply.code(404);
+          return { error: 'unknown staff account' };
+        }
+        return { token, sessionToken: token };
+      }
+
       const token = devLogin(db, {
-        role: typeof body.role === 'string' ? body.role : undefined,
-        universityId: body.universityId ?? null,
+        role: parsed.data.role,
+        universityId: parsed.data.universityId ?? null,
       });
       return { token, sessionToken: token };
     });
