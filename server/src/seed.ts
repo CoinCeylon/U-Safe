@@ -15,5 +15,25 @@ for (const u of demos) {
   createUniversity(db, { ...u, status: 'active' });
 }
 
+// Demo staff accounts for the M063 development login dropdown. Addresses are
+// dev placeholders; the CIP-8 wallet flow registers real stake addresses.
+const staffRoles = ['registrar', 'investigator', 'admin'] as const;
+const findStaff = db.prepare('SELECT id FROM staff WHERE address = ?');
+const insertStaff = db.prepare(
+  `INSERT INTO staff (university_id, role, address, public_key_jwk)
+   VALUES (?, ?, ?, NULL)`,
+);
+for (const u of demos) {
+  for (const role of staffRoles) {
+    const address = `dev-${role}-${u.id}`;
+    if (findStaff.get(address) === undefined) {
+      insertStaff.run(u.id, role, address);
+    }
+  }
+}
+
 console.log('Seeded universities:', demos.map((u) => u.id).join(', '));
+console.log(
+  'Seeded demo staff accounts: registrar, investigator, admin per university',
+);
 db.close();

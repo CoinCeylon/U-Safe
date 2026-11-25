@@ -30,6 +30,8 @@ import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
   createChallenge,
   devLogin,
+  devLoginByStaffId,
+  listDevAccounts,
   loginWithSignature,
   requireStaff,
   staffOwnerRole,
@@ -231,6 +233,7 @@ export const buildApp = async (
   app.get('/api/health', () => ({
     ok: true,
     mode: config.CHAIN_MODE,
+    devLogin: process.env.DEV_LOGIN === 'true',
   }));
 
   app.get('/api/universities', () => {
@@ -292,6 +295,54 @@ export const buildApp = async (
         reply.code(400);
         return { error: (error as Error).message };
       }
+    },
+  );
+
+  // M064: staff registers the university RSA public key after the role key
+  // setup flow. Only staff of that university may set it; the JWK must be a
+  // public RSA key (no private components).
+  const publicKeySchema = z.object({ publicKeyJwk: z.string().min(1) });
+  app.put<{ Params: { id: string } }>(
+    '/api/university/:id/public-key',
+    { preHandler: requireStaff() },
+    (request, reply) => {
+      const staff = request.staff;
+      if (
+        staff === undefined ||
+        staff.university_id === null ||
+        staff.university_id !== request.params.id
+      ) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      const parsed = publicKeySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      let jwk: JsonWebKey;
+      try {
+        jwk = JSON.parse(parsed.data.publicKeyJwk) as JsonWebKey;
+      } catch {
+        reply.code(400);
+        return { error: 'invalid public key' };
+      }
+      if (
+        jwk.kty !== 'RSA' ||
+        typeof jwk.n !== 'string' ||
+        typeof jwk.e !== 'string' ||
+        'd' in jwk
+      ) {
+        reply.code(400);
+        return { error: 'invalid public key' };
+      }
+
+      db.prepare(
+        'UPDATE universities SET public_key_jwk = ? WHERE id = ?',
+      ).run(parsed.data.publicKeyJwk, request.params.id);
+      return { ok: true };
     },
   );
 
@@ -457,14 +508,38 @@ export const buildApp = async (
   });
 
   if (process.env.DEV_LOGIN === 'true') {
-    app.post('/api/auth/dev-login', (request) => {
-      const body = (request.body ?? {}) as {
-        role?: string;
-        universityId?: string | null;
-      };
+    // Dev-only dropdown of seeded staff accounts for the M063 login page.
+    app.get('/api/auth/dev-accounts', () => ({
+      accounts: listDevAccounts(db),
+    }));
+
+    const devLoginSchema = z.object({
+      staffId: z.number().int().positive().optional(),
+      role: z.string().min(1).optional(),
+      universityId: z.string().min(1).nullish(),
+    });
+
+    app.post('/api/auth/dev-login', (request, reply) => {
+      const parsed = devLoginSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      // Prefer an explicit staffId from the dropdown; fall back to the
+      // older role-based form used by earlier milestones and tests.
+      if (parsed.data.staffId !== undefined) {
+        const token = devLoginByStaffId(db, parsed.data.staffId);
+        if (token === null) {
+          reply.code(404);
+          return { error: 'unknown staff account' };
+        }
+        return { token, sessionToken: token };
+      }
+
       const token = devLogin(db, {
-        role: typeof body.role === 'string' ? body.role : undefined,
-        universityId: body.universityId ?? null,
+        role: parsed.data.role,
+        universityId: parsed.data.universityId ?? null,
       });
       return { token, sessionToken: token };
     });

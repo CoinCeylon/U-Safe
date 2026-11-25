@@ -125,3 +125,32 @@ Record package names, versions and adaptations here.
   instead of rebuilding the step DOM. Rebuilding on every keystroke replaced the
   focused field and made students type only one character at a time. Navigation
   validity is refreshed separately; full re-renders remain only for step/status changes.
+- M063 dev login: `POST /api/auth/dev-login` now prefers an explicit `staffId`
+  from the dropdown and falls back to the older `{role, universityId}` form from
+  M032. The new `GET /api/auth/dev-accounts` (both gated on `DEV_LOGIN=true`)
+  lists seeded staff rows joined with university names; `/api/health` reports a
+  `devLogin` flag so the portal shows the red "development login" section only
+  when the server enables it. `npm run seed` seeds one registrar, one
+  investigator and one admin per demo university with placeholder addresses
+  (`dev-<role>-<university>`), idempotently by address check. The staff session
+  token lives in `sessionStorage` only. Role guards are client-side route rules
+  in `university/roles.ts` (`/complaints` investigator+admin, `/roster`
+  registrar+admin, `/keys` all roles since M064, because investigators must
+  load the university private key before complaint pages open) verified by
+  unit tests; server-side route authorization continues to use the M032
+  `requireStaff` hook.
+- The root `node_modules/vite` had drifted to 8.3.8 while the lockfile pins
+  6.4.6, which broke `tsc -p apps/web`. `npm ci` restored the locked tree
+  (`npm install` needs `--legacy-peer-deps`, see above).
+- M064 stores the university private key as a passphrase-encrypted backup blob
+  (`SecureStore.exportBackup`, PBKDF2 100k + AES-256-GCM) in the IndexedDB
+  backend of the secure store, not as a `SecureStore` entry keyed by a secret:
+  staff have no student secret to derive a storage key from, and the blob is
+  already encrypted at rest. The in-memory imported `CryptoKey` is cleared on
+  every page refresh, so the portal always asks for the passphrase again; a
+  wrong passphrase fails the GCM authentication. The import flow accepts the
+  exact `.dev-keys/university-<id>.json` files from `npm run seed:keys`
+  (passphrase `demo`). `PUT /api/university/:id/public-key` requires a staff
+  session of that university, validates that the JWK is an RSA public key
+  without private components, and stores it in
+  `universities.public_key_jwk`.
