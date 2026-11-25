@@ -4,6 +4,8 @@ import type {
   FileComplaintResult,
   GetComplaintInput,
   GetComplaintResult,
+  GetHistoryInput,
+  GetHistoryResult,
   GetLeavesInput,
   GetLeavesResult,
   GetRootsInput,
@@ -50,6 +52,7 @@ export interface ComplaintLedger {
   reopenComplaint(input: ReopenComplaintInput): Promise<ReopenComplaintResult>;
   listComplaints(filter: ListComplaintsFilter): Promise<ListComplaintsResult>;
   getComplaint(input: GetComplaintInput): Promise<GetComplaintResult>;
+  getHistory(input: GetHistoryInput): Promise<GetHistoryResult>;
   getStats(input: GetStatsInput): Promise<GetStatsResult>;
   getLeaves(input: GetLeavesInput): Promise<GetLeavesResult>;
   getRoots(input: GetRootsInput): Promise<GetRootsResult>;

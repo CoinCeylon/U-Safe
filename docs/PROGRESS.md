@@ -45,3 +45,20 @@ M044 | done | Development-only demo key seeding creates university and UGC RSA k
 M045 | done | Role-aware MockLedger queries implemented for listComplaints, getComplaint, getHistory and getStats; students and universities are scoped to a university, UGC sees all, and staff-involved records are redacted for university detail/list responses
 M046 | done | Small-group protection applied to stats totals and category/urgency/status breakdowns, with sub-five groups merged into other, protected counts returned as null, and UGC receiving exact per-university totals
 M047 | done | Mock-ledger HTTP routes wired for enrollment proofs, complaint filing/support/status/reopen, role-aware lists/details/stats and university leaves/roots; npm run demo:cli completes the five-student flow with supportCount 4 and status finished even on an existing database, while try:forge and try:duplicate complete Human Test 4's forged-proof and duplicate-support checks
+M048 | done | Landing page with plain-language explanation, three portal buttons (Student, University, UGC) and a mock-mode banner that appears only when the server reports mock mode.
+M049 | done | Student onboarding wizard with four steps (university/email, OTP code, connect wallet, finish), forward/back navigation, privacy explanation on step 1, and sessionStorage resumption after refresh.
+M050 | done | Wallet connection module with Mesh SDK BrowserWallet for Lace (CIP-30 signData) plus a dev FakeWallet (deterministic HMAC-SHA256 from a passphrase, ?fakewallet=1); unit tests verify deterministic signatures.
+M051 | done | Secret derivation step: unlockStudent signs `U-Safe student secret v1|<universityId>` via the wallet, derives the 32-byte secret with HKDF-SHA256, holds it in memory only, and can compute the public commitment; re-unlocking is deterministic.
+M052 | done | Enrollment completion: step 4 unlocks the secret, computes the commitment, calls POST /api/enroll with the ticket, persists the receipt in SecureStore (IndexedDB), and shows a success screen with friendly ceiling/ticket-error messages.
+
+M053 | done | Credential refresh (MerkleTree credential computation)
+
+M054 | done | Community feed page with SSE live updates, complaint cards, filters, and sorting
+
+M055 | done | Complaint detail page with full description, status timeline, and outcome message
+
+M056 | done | Anonymous support flow: unlock on demand, locally built mock proof, 2–12 s queued submission, optimistic count, quiet duplicate handling, and encrypted local support state
+
+M057 | done | File complaint form with 40–4000 character validation, category, urgency, staff-involved toggle, optional accused details, privacy guidance and filing slots
+
+M058 | done | Evidence attachment picker with up to 5 files, 25 MB each, previews, metadata stripping for images, metadata acknowledgement, and clear rejection messages

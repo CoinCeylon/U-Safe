@@ -8,6 +8,11 @@ Record package names, versions and adaptations here.
 - tsx for running TypeScript server code in development.
 - concurrently for running server + web in `npm run dev`.
 - Vite proxies `/api` to `http://127.0.0.1:3000` in development.
+- Mesh SDK `@meshsdk/core` ^1.9.1 for the Lace (CIP-30 / CIP-8) wallet integration:
+  `BrowserWallet.getInstalledWallets()`, `BrowserWallet.enable('lace')`,
+  `browserWallet.signData(payload, address?)` returning `DataSignature { signature, key }`,
+  and `browserWallet.getUsedAddresses()`. Lace wallet name is `lace`; install URL
+  is `https://lace.dev/`.
 - Mail: `nodemailer` ^6.9.16 with `@types/nodemailer` ^8.0.2; `MAIL_MODE=dev|smtp`
   selects `ConsoleMailer` or `SmtpMailer`. Dev messages go to `server/.dev-mailbox/`,
   which is git-ignored; the console prints only the OTP code and file path, never the
@@ -69,3 +74,54 @@ Record package names, versions and adaptations here.
   files through HTTP, reuses one support proof, expects the second request to fail, and
   confirms the final count stays at 1. The demo CLI uses the leaf indexes returned by
   `enrollCommitment`, so it also works when a university already has earlier enrollments.
+- M049 persists non-sensitive onboarding progress (step, university, email) in
+  `sessionStorage` so the wizard resumes after a refresh. `SecureStore` is not used yet
+  because it requires the student secret, which is derived in M051. Once the secret is
+  available, the persisted progress moves into `SecureStore` (encrypted with the secret).
+  Sensitive values (OTP code, wallet signature, student secret) are never persisted.
+
+- Student portal blank page fix: `wallet.ts` no longer imports `@meshsdk/core` at module
+  level. Mesh is loaded with a dynamic `import('@meshsdk/core')` on first use
+  (`connect`, `isLaceInstalled`), because its dependencies reference Node built-ins and
+  broke the whole portal module graph at page load. `isLaceInstalled()` is now async.
+- Mesh's Node built-in imports (for example `pbkdf2Sync` from `crypto`) are provided by
+  `vite-plugin-node-polyfills` ^0.28.0 (devDependency of `@usafe/web`) in `apps/web/vite.config.ts`.
+  Without it the production build fails with `"pbkdf2Sync" is not exported by "__vite-browser-external"`.
+- `vite` ^6.4.6 is a root devDependency because `vitest` 5 declares it as a peer, and
+  `npm install` runs with `--legacy-peer-deps` (the `@types/node` peer conflict otherwise
+  stops the install).
+- `student/main.ts` starts the university request once at module load without awaiting
+  it, and the Home route waits on that shared promise. The router renders a first visit
+  twice (it sets the hash), and two identical requests in flight left one stuck in the
+  browser, so the wizard never appeared. A top-level `await` was also removed; the portal
+  renders at once and shows "Loading universities…" until the list arrives.
+- `ui/toast.ts` mounts each toast itself in a fixed `#usafe-toast-host` on `document.body`
+  and removes it after 6 s (only while it is still mounted there). The student wizard
+  ignored the element `toast()` returned, so no wizard message was ever visible.
+- M056 builds the support proof directly from the locally cached Merkle path in
+  `CachedCredential`. `proveMembershipMock` requires a full leaf list, but the portal
+  already refreshed that list locally in M053, so re-downloading it for every support
+  would add traffic without adding privacy. The leaf index is never a separate field in
+  the request body; it only appears inside the mock proof, which the server verifies
+  and discards.
+- Supported complaint ids are stored through `SecureStore` (IndexedDB, encrypted with
+  the student secret), not `localStorage`. The university id is remembered in
+  `sessionStorage` because it is non-sensitive and lets a reloaded portal ask the wallet
+  to re-derive the secret.
+- A support action is delayed with `SubmitQueue` for a random 2–12 seconds. A repeated
+  support response (400/409 nullifier already used) is treated as a quiet success by
+  the UI so a double click cannot appear as an error.
+- `IndexedDbStorage.getStore()` returns the object store while the transaction is still
+  active. Resolving it on `tx.oncomplete` made the store unusable and left enrolment
+  stuck at "Saving your enrolment receipt…". The database is opened at its current
+  version (not a hard-coded version 1); when another store already exists at that
+  version, `openDb` upgrades once so enrolment and supported-id stores can share one
+  database without a `VersionError`.
+- M058 calls `stripImage` on images when they are added to the form. If the image is
+  corrupt or canvas re-encoding fails, the original file is kept and the file is treated
+  like a video/document: the metadata acknowledgement checkbox becomes required. A
+  failed strip must not break the form or silently claim that metadata was removed.
+- The enrolment wizard updates state in place on `input` events (`onChange(next, false)`)
+  instead of rebuilding the step DOM. Rebuilding on every keystroke replaced the
+  focused field and made students type only one character at a time. Navigation
+  validity is refreshed separately; full re-renders remain only for step/status changes.
