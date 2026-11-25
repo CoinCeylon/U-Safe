@@ -16,6 +16,7 @@
 import { MAX_EVIDENCE_FILES } from '@usafe/shared';
 import { button } from '../ui/button';
 import { toast } from '../ui/toast';
+import { friendlyError, isOfflineError, OFFLINE_MESSAGE } from '../lib/offline';
 import {
   evidenceKind,
   formatBytes,
@@ -589,9 +590,7 @@ function renderSubmissionFlow(
     });
     area.append(retry);
     retry.focus();
-  };
-
-  const attempt = async (): Promise<void> => {
+  };  const attempt = async (): Promise<void> => {
     if (busy) {
       return;
     }
@@ -676,17 +675,17 @@ function renderSubmissionFlow(
       toast('Your complaint was submitted.', 'success');
     } catch (error) {
       if (error instanceof StepError) {
-        fail(
-          `Step "${labelForStep(error.step)}" failed: ${error.message}`,
-          error.step,
-        );
+        // An offline failure gets the friendly offline wording; the retry
+        // button then resumes without re-uploading anything.
+        const message = isOfflineError(error.stepCause)
+          ? OFFLINE_MESSAGE
+          : `Step "${labelForStep(error.step)}" failed: ${error.message}`;
+        fail(message, error.step);
       } else if (error instanceof FilingLimitError) {
         status.className = 'text-sm text-warning';
         status.textContent = error.message;
       } else {
-        fail(
-          error instanceof Error ? error.message : 'Submission failed.',
-        );
+        fail(friendlyError(error, 'Submission failed.'));
       }
     } finally {
       busy = false;

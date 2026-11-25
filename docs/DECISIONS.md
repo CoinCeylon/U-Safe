@@ -193,3 +193,26 @@ Record package names, versions and adaptations here.
   verifies the SHA-256 against the receipt before decrypting, and shows
   "Integrity verified" on success. The page states clearly that clearing site data
   removes the receipts permanently and restoring the wallet does not bring them back.
+- M062's helpline list lives in `packages/shared` as `HELPLINES` (overridable with the
+  `HELPLINES` environment variable, a JSON array of `{name, phone, description?}`).
+  It defaults to an **empty** list on purpose: no unverified phone number is ever
+  shown to a student. The help page renders generic emergency guidance (campus
+  security / police, 119 in Sri Lanka) that is correct without configuration, plus
+  a "no helplines configured yet" note when the list is empty.
+- Offline detection (M062, `apps/web/src/lib/offline.ts`) treats a `TypeError` from
+  `fetch` or `navigator.onLine === false` as "offline" and shows one friendly
+  message with a retry path: the feed error state has a Try again button that also
+  reconnects the SSE stream (which is closed on error instead of silently dying),
+  support clicks and wizard steps show offline wording, and the submission pipeline
+  keeps the failed step's cause on `StepError` so its retry screen can say the
+  network was the problem. The student portal also shows toasts on browser
+  offline/online events.
+- Accessibility (M062): a global `:focus-visible` outline lives in
+  `styles/app.css` (Tailwind's reset removes browser defaults), and the shared
+  `ui/frame.ts` gained a "Skip to main content" link plus a focusable `main`
+  landmark — every portal using the frame gets both. All student controls are
+  native elements (buttons, links, inputs, selects, radios with labels), the only
+  `img` (evidence preview) has alt text, the spinner is `aria-hidden` with a
+  screen-reader label, toasts announce through `aria-live="polite"`, and dynamic
+  progress areas use `role="status"`. The help page is fully static, so it works
+  with no network at all.

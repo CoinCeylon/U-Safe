@@ -10,6 +10,7 @@
 // in encrypted SecureStore so the button survives a reload.
 
 import type { Status } from '@usafe/shared';
+import { friendlyError } from '../lib/offline';
 import { getStudentSecret } from './unlock';
 import { getCachedCredential, refreshCredential } from './credential';
 import { ensureUnlocked } from './session';
@@ -52,7 +53,8 @@ export async function renderDetail(
 
   const cred = getCachedCredential();
   if (!cred) {
-    outlet.innerHTML = '<p class="text-slate-600">Credential not cached.</p>';
+    outlet.innerHTML =
+      '<p class="text-sm text-slate-600">Your enrollment credential is not ready yet. Go back to the feed and unlock your student secret again.</p>';
     return;
   }
 
@@ -211,8 +213,9 @@ export async function renderDetail(
             await rememberSupported(complaintId);
             toast('You already support this complaint.', 'info');
           } else {
+            // Offline clicks get a friendly offline message; nothing was sent.
             toast(
-              error instanceof Error ? error.message : 'Could not support this complaint.',
+              friendlyError(error, 'Could not support this complaint.'),
               'danger',
             );
           }
@@ -230,8 +233,19 @@ export async function renderDetail(
 
     container.append(card, supportButton, timeline, back);
     outlet.replaceChildren(container);
-  } catch (e) {
-    outlet.innerHTML = `<p class="text-danger">Failed to load complaint: ${e instanceof Error ? e.message : String(e)}</p>`;
+  } catch (error) {
+    outlet.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'text-sm text-danger';
+    message.textContent = friendlyError(
+      error,
+      'Could not load this complaint. Please try again.',
+    );
+    const back = document.createElement('a');
+    back.href = '#/feed';
+    back.className = 'text-sm text-primary underline';
+    back.textContent = 'Back to community feed';
+    outlet.append(message, back);
   }
 }
 

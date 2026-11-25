@@ -93,14 +93,15 @@ export interface StepProgress {
 export class StepError extends Error {
   constructor(
     readonly step: SubmitStepId,
-    cause: unknown,
+    readonly stepCause: unknown,
   ) {
     super(
-      cause instanceof Error
-        ? cause.message
-        : `step ${step} failed: ${String(cause)}`,
+      stepCause instanceof Error
+        ? stepCause.message
+        : `step ${step} failed: ${String(stepCause)}`,
     );
     this.name = 'StepError';
+    this.cause = stepCause;
   }
 }
 

@@ -65,3 +65,51 @@ export const DEMO_SLA_SECONDS = readOptionalPositiveInt('DEMO_SLA_SECONDS');
 export const SUPPORT_ALERT_THRESHOLD = readPositiveInt('SUPPORT_ALERT_THRESHOLD', 10);
 
 export const MIN_GROUP_SIZE = readPositiveInt('MIN_GROUP_SIZE', 5);
+
+// ---------------------------------------------------------------------------
+// Emergency helplines (student help page, M062)
+// ---------------------------------------------------------------------------
+
+/** One emergency helpline shown on the student help page. */
+export interface Helpline {
+  name: string;
+  phone: string;
+  description?: string;
+}
+
+// The list is deliberately empty by default: a deployer must configure real,
+// verified numbers for their institution (see docs/DECISIONS.md). The help
+// page always shows generic emergency guidance, so an unconfigured list never
+// leaves a student without direction.
+export const DEFAULT_HELPLINES: Helpline[] = [];
+
+const isHelpline = (value: unknown): value is Helpline =>
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as Helpline).name === 'string' &&
+  (value as Helpline).name.trim().length > 0 &&
+  typeof (value as Helpline).phone === 'string' &&
+  (value as Helpline).phone.trim().length > 0 &&
+  ((value as Helpline).description === undefined ||
+    typeof (value as Helpline).description === 'string');
+
+const readHelplines = (): Helpline[] => {
+  const value = readEnv('HELPLINES');
+  if (value === undefined) {
+    return DEFAULT_HELPLINES;
+  }
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_HELPLINES;
+    }
+    const helplines = parsed.filter(isHelpline);
+    return helplines.length > 0 ? helplines : DEFAULT_HELPLINES;
+  } catch {
+    return DEFAULT_HELPLINES;
+  }
+};
+
+// Helpline numbers for the student help page, overridable with the HELPLINES
+// environment variable (a JSON array of {name, phone, description?}).
+export const HELPLINES: Helpline[] = readHelplines();

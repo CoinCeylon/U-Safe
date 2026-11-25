@@ -1,3 +1,19 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Visible focus for keyboard users (M062): every interactive element shows a
+   high-contrast outline as soon as it receives keyboard focus. Tailwind's
+   base reset removes the browser default, so the rule is restored globally. */
+@layer base {
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #115e59;
+    outline-offset: 2px;
+  }
+}

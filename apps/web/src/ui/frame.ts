@@ -122,13 +122,27 @@ export function createFrame(input: FrameInput = 'Portal'): PortalFrame {
 
   const content = document.createElement('main');
   content.className = options.contentClassName ?? 'flex-1 p-4';
+  content.id = 'main-content';
+  content.tabIndex = -1;
   body.append(nav, content);
 
   const toastHost = document.createElement('div');
   toastHost.className = 'fixed bottom-4 right-4 z-50 flex flex-col gap-2';
   toastHost.setAttribute('aria-live', 'polite');
 
-  root.append(header, body, toastHost);
+  // Keyboard users can jump straight past the navigation to the content.
+  const skipLink = document.createElement('a');
+  skipLink.href = '#main-content';
+  skipLink.className =
+    'sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 ' +
+    'focus:rounded-md focus:bg-primary-dark focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white';
+  skipLink.textContent = 'Skip to main content';
+  skipLink.addEventListener('click', (event) => {
+    event.preventDefault();
+    content.focus();
+  });
+
+  root.append(skipLink, header, body, toastHost);
 
   const setRoleBadge = (label: string | null): void => {
     if (label === null || label === '') {

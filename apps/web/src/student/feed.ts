@@ -5,6 +5,8 @@
 // a refresh. Cards link to the detail page where the support button lives.
 
 import { toast } from '../ui/toast';
+import { button } from '../ui/button';
+import { friendlyError } from '../lib/offline';
 import { getStudentSecret } from './unlock';
 import { getCachedCredential, refreshCredential } from './credential';
 import { ensureUnlocked } from './session';
@@ -37,7 +39,8 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
 
   const cred = getCachedCredential();
   if (!cred) {
-    outlet.innerHTML = '<p class="text-slate-600">Credential not cached.</p>';
+    outlet.innerHTML =
+      '<p class="text-sm text-slate-600">Your enrollment credential is not ready yet. Go back to the feed and unlock your student secret again.</p>';
     return;
   }
 
@@ -89,7 +92,7 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
   wrapper.append(controls, list);
   outlet.replaceChildren(wrapper);
 
-  const loadComplaints = async (): Promise<void> => {
+  const loadComplaints = async (): Promise<boolean> => {
     try {
       const response = await fetch(`/api/complaints?university=${univParam}`);
       if (!response.ok) {
@@ -111,42 +114,81 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
       });
 
       renderList(list, complaints);
-    } catch {
-      // Error details are deliberately not shown to the student.
-      list.innerHTML =
-        '<p class="text-danger">Could not load complaints. Please try again.</p>';
+      return true;
+    } catch (error) {
+      // Error details are deliberately not shown to the student, but the
+      // message says whether it looks like an offline failure.
+      renderLoadError(list, error, async () => {
+        const reloaded = await loadComplaints();
+        if (reloaded) {
+          connectEvents();
+        }
+      });
+      return false;
     }
+  };
+
+  const connectEvents = (): void => {
+    if (eventSource !== null) {
+      eventSource.close();
+      eventSource = null;
+    }
+    eventSource = new EventSource(`/api/events?university=${univParam}`);
+    eventSource.onmessage = (event) => {
+      try {
+        const data = awaitSafeJson(String(event.data)) as { type?: unknown };
+        if (
+          data.type === 'complaint.created' ||
+          data.type === 'complaint.supported' ||
+          data.type === 'complaint.status' ||
+          data.type === 'complaint.escalated'
+        ) {
+          void loadComplaints();
+          if (data.type === 'complaint.created') {
+            toast('A new complaint was filed.', 'info');
+          }
+        }
+      } catch {
+        // Ignore malformed event data; live updates are best-effort.
+      }
+    };
+    // A dropped connection closes the stream; the next successful load or
+    // the retry button reconnects it.
+    eventSource.onerror = () => {
+      if (eventSource !== null) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
   };
 
   statusFilter.addEventListener('change', () => void loadComplaints());
   categoryFilter.addEventListener('change', () => void loadComplaints());
   sort.addEventListener('change', () => void loadComplaints());
 
-  await loadComplaints();
+  if (await loadComplaints()) {
+    connectEvents();
+  }
+}
 
-  eventSource = new EventSource(`/api/events?university=${univParam}`);
-  eventSource.onmessage = (event) => {
-    try {
-      const data = awaitSafeJson(String(event.data)) as { type?: unknown };
-      if (
-        data.type === 'complaint.created' ||
-        data.type === 'complaint.supported' ||
-        data.type === 'complaint.status' ||
-        data.type === 'complaint.escalated'
-      ) {
-        void loadComplaints();
-        if (data.type === 'complaint.created') {
-          toast('A new complaint was filed.', 'info');
-        }
-      }
-    } catch {
-      // Ignore malformed event data; live updates are best-effort.
-    }
-  };
-  eventSource.onerror = () => {
-    eventSource?.close();
-    eventSource = null;
-  };
+function renderLoadError(
+  outlet: HTMLElement,
+  error: unknown,
+  retry: () => Promise<void>,
+): void {
+  outlet.replaceChildren();
+  const message = document.createElement('p');
+  message.className = 'text-sm text-danger';
+  message.textContent = friendlyError(
+    error,
+    'Could not load complaints. Please try again.',
+  );
+  const retryButton = button({
+    label: 'Try again',
+    variant: 'secondary',
+    onClick: () => void retry(),
+  });
+  outlet.append(message, retryButton);
 }
 
 function renderList(outlet: HTMLElement, complaints: FeedComplaint[]): void {

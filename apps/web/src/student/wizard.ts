@@ -15,6 +15,7 @@
 
 import { button } from '../ui/button';
 import { navigate } from '../lib/router';
+import { friendlyError, isOfflineError } from '../lib/offline';
 import { input } from '../ui/input';
 import { select } from '../ui/select';
 import { toast } from '../ui/toast';
@@ -323,8 +324,7 @@ function renderStep2(state: WizardState, onChange: WizardChange): HTMLElement {
       onChange({ ticket: ticket.ticket });
       toast('Enrolment ticket received.', 'success');
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Verification failed.';
+      const message = friendlyError(error, 'Verification failed.');
       onChange({ otpError: message }, false);
       otpError.textContent = message;
       otpError.hidden = false;
@@ -359,7 +359,7 @@ function renderStep2(state: WizardState, onChange: WizardChange): HTMLElement {
       verify.disabled = !isValidCode(state.code) || state.ticket !== null;
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Could not resend code.';
+        friendlyError(error, 'Could not resend code.');
       onChange({ otpError: message }, false);
       otpError.textContent = message;
       otpError.hidden = false;
@@ -593,17 +593,17 @@ async function runEnrollment(
     onChange({ enrollStatus: 'done' });
     toast('Enrolment complete.', 'success');
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Enrolment failed.';
-    let friendly = message;
-    if (message === 'ceiling reached') {
-      friendly =
-        'This university has reached its enrolment ceiling. Please contact the registrar.';
-    } else if (message === 'invalid ticket') {
-      friendly =
-        'Your enrolment ticket is invalid or has expired. Request a new code.';
-    } else if (message.startsWith('HTTP 400')) {
-      friendly = 'Enrolment was rejected by the server. Please try again.';
+    let friendly = friendlyError(error, 'Enrolment failed.');
+    if (!isOfflineError(error)) {
+      if (friendly === 'ceiling reached') {
+        friendly =
+          'This university has reached its enrolment ceiling. Please contact the registrar.';
+      } else if (friendly === 'invalid ticket') {
+        friendly =
+          'Your enrolment ticket is invalid or has expired. Request a new code.';
+      } else if (friendly.startsWith('HTTP 400')) {
+        friendly = 'Enrolment was rejected by the server. Please try again.';
+      }
     }
     onChange({ enrollStatus: 'error', enrollError: friendly });
     toast(friendly, 'danger');
@@ -699,7 +699,7 @@ export function renderWizard(
         () => onChange({ otpRequested: true }, false),
         (error) => {
           const message =
-            error instanceof Error ? error.message : 'Could not send code.';
+            friendlyError(error, 'Could not send code.');
           onChange({ otpError: message }, false);
           const errorEl = stepOutlet.querySelector<HTMLElement>('#wizard-otp-error');
           if (errorEl) {

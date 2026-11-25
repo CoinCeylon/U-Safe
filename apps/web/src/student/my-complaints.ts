@@ -15,6 +15,7 @@ import { statusBadge, badge } from '../ui/badge';
 import { button } from '../ui/button';
 import { emptyState } from '../ui/emptyState';
 import { toast } from '../ui/toast';
+import { friendlyError } from '../lib/offline';
 import { getStudentSecret } from './unlock';
 import { ensureUnlocked } from './session';
 import {
@@ -25,7 +26,6 @@ import {
   type FilingReceipt,
 } from './filings';
 import {
-  EvidenceIntegrityError,
   downloadEvidenceFile,
 } from './evidenceDownload';
 import { formatBytes } from './evidence';
@@ -293,17 +293,10 @@ function evidenceRow(evidence: FilingEvidenceInfo): HTMLElement {
           state.textContent = 'Integrity verified';
           state.className = 'text-xs text-success';
         } catch (error) {
-          if (error instanceof EvidenceIntegrityError) {
-            state.textContent = error.message;
-            state.className = 'text-xs text-danger';
-            toast(error.message, 'danger');
-          } else {
-            const message =
-              error instanceof Error ? error.message : 'Download failed.';
-            state.textContent = message;
-            state.className = 'text-xs text-danger';
-            toast(message, 'danger');
-          }
+          const message = friendlyError(error, 'Download failed.');
+          state.textContent = message;
+          state.className = 'text-xs text-danger';
+          toast(message, 'danger');
         } finally {
           busy = false;
           download.disabled = false;
