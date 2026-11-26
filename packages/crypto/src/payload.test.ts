@@ -3,10 +3,9 @@ import {
   generateCommunityKey,
   sealPayload,
   openPayload,
+  sealedPayloadBytes,
   type SealedPayload,
 } from './payload';
-
-const encoder = new TextEncoder();
 
 describe('generateCommunityKey', () => {
   it('generates a 32-byte AES-256 key', () => {
@@ -87,16 +86,24 @@ describe('sealPayload / openPayload', () => {
     await expect(openPayload(tampered, key)).rejects.toThrow();
   });
 
-  it('hash matches the stored bytes', async () => {
+  it('hash matches the exact stored sealed bytes', async () => {
     const key = generateCommunityKey();
     const sealed = await sealPayload(payload, key);
-    const plaintext = encoder.encode(JSON.stringify(payload));
+    const storedBytes = sealedPayloadBytes(sealed);
     const hashResult = await crypto.subtle.digest(
       'SHA-256',
-      plaintext as unknown as BufferSource, // eslint-disable-line @typescript-eslint/no-unnecessary-type-assertion
+      storedBytes as unknown as BufferSource,
     );
     const expectedHash = new Uint8Array(hashResult);
     expect(sealed.payloadHash).toEqual(expectedHash);
+    // And it is deliberately not the plaintext hash any more.
+    const plaintextHash = new Uint8Array(
+      await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(JSON.stringify(payload)),
+      ),
+    );
+    expect(sealed.payloadHash).not.toEqual(plaintextHash);
   });
 
   it('seals different payloads to different outputs', async () => {

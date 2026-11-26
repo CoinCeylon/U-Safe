@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import './env.js';
 
 const collectArgs = (): string[] => process.argv.slice(2).filter((value) => value !== 'bash');
 

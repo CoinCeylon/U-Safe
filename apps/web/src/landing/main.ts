@@ -23,29 +23,9 @@ const router = createRouter(portalFrame.content);
 // ---------------------------------------------------------------------------
 // Mock-mode banner
 // ---------------------------------------------------------------------------
-// Shown only when the server reports CHAIN_MODE=mock. The banner tells the
-// visitor that anonymity is simulated in this mode and is not real protection.
-const banner = document.createElement('div');
-banner.className =
-  'mb-4 rounded-md border border-warning bg-warning-light text-warning px-3 py-2 text-sm font-medium';
-banner.textContent = 'MOCK MODE: anonymity is simulated';
-banner.hidden = true;
-
-const setBanner = (mock: boolean): void => {
-  banner.hidden = !mock;
-};
-
-// Fetch server health once so the banner reflects the real chain mode.
-const checkHealth = async (): Promise<void> => {
-  try {
-    const response = await fetch('/api/health');
-    const data = (await response.json()) as { ok: boolean; mode: string };
-    setBanner(data.mode === 'mock');
-  } catch {
-    // Leave the banner hidden when the server cannot be reached.
-  }
-};
-void checkHealth();
+// The shared portal frame renders the banner from `/api/health`, so the
+// landing page gets the same live element as the student, university and UGC
+// portals (M048 / AGENT.md section 6). No cloned, never-updated node here.
 
 // ---------------------------------------------------------------------------
 // Home route: the landing page
@@ -53,16 +33,6 @@ void checkHealth();
 router.register('/', () => {
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-5 max-w-2xl mx-auto';
-
-  // Banner sits at the top of the page content.
-  section.append(banner.cloneNode(true));
-  const bannerEl = section.lastElementChild as HTMLElement;
-  bannerEl.hidden = banner.hidden;
-  // Keep the live banner in sync if health resolves after first render.
-  const updateBanner = (): void => {
-    bannerEl.hidden = banner.hidden;
-  };
-  updateBanner();
 
   const heading = document.createElement('h1');
   heading.className = 'text-2xl font-semibold text-slate-900';
@@ -142,14 +112,6 @@ router.register('/', () => {
 router.register('/about', () => {
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-2 max-w-2xl mx-auto';
-
-  section.append(banner.cloneNode(true));
-  const bannerEl = section.lastElementChild as HTMLElement;
-  bannerEl.hidden = banner.hidden;
-  const updateBanner = (): void => {
-    bannerEl.hidden = banner.hidden;
-  };
-  updateBanner();
 
   const heading = document.createElement('h2');
   heading.className = 'text-xl font-semibold text-slate-900';

@@ -33,8 +33,8 @@ import {
 } from './services/communityKey.js';
 import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
-  createChallenge,
   devLogin,
+  issueChallenge,
   loginWithSignature,
   requireStaff,
   staffOwnerRole,
@@ -164,6 +164,9 @@ export const buildApp = async (
   const app = Fastify({
     logger: {
       level: 'info',
+      // Drop pino's default pid/hostname fields: AGENT.md section 4 allows
+      // only path, status and duration in logs.
+      base: null,
     },
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: MAX_BLOB_SIZE,
@@ -222,9 +225,13 @@ export const buildApp = async (
   });
 
   app.addHook('onResponse', (request, reply, done) => {
-    request.log.info(
+    // Only the pathname is logged. Query strings can carry blob hashes and
+    // other identifiers, so they are stripped. `app.log` is used instead of
+    // `request.log` so Fastify does not add a per-request id field
+    // (AGENT.md section 4).
+    app.log.info(
       {
-        path: request.url,
+        path: new URL(request.url, 'http://localhost').pathname,
         statusCode: reply.statusCode,
         durationMs: reply.elapsedTime,
       },
@@ -260,6 +267,7 @@ export const buildApp = async (
 
   app.post<{ Params: { id: string } }>(
     '/api/university/:id/roster',
+    { preHandler: requireStaff(['registrar', 'admin']) },
     (request, reply) => {
       const university = getUniversity(db, request.params.id);
       if (university === null) {
@@ -430,8 +438,8 @@ export const buildApp = async (
     },
   );
 
-  app.get('/api/auth/challenge', () => {
-    const nonce = createChallenge();
+  app.post('/api/auth/challenge', () => {
+    const nonce = issueChallenge();
     return { nonce, challenge: nonce };
   });
 
@@ -439,8 +447,8 @@ export const buildApp = async (
     address: z.string().min(1),
     signature: z.string().min(1).optional(),
     key: z.string().min(1).optional(),
-    nonce: z.string().optional(),
-    challenge: z.string().optional(),
+    nonce: z.string().min(1).optional(),
+    challenge: z.string().min(1).optional(),
   });
 
   app.post('/api/auth/login', async (request, reply) => {
@@ -449,10 +457,11 @@ export const buildApp = async (
       reply.code(400);
       return { error: 'invalid request' };
     }
-    const token = loginWithSignature(db, {
+    const token = await loginWithSignature(db, {
       address: parsed.data.address,
       signature: parsed.data.signature,
       key: parsed.data.key,
+      nonce: parsed.data.nonce ?? parsed.data.challenge,
     });
     if (token === null) {
       reply.code(401);

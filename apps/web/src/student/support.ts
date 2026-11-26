@@ -15,7 +15,7 @@
 import {
   SubmitQueue,
   commitment,
-  supportNullifier,
+  mockNullifier,
   type MockProofData,
 } from '@usafe/crypto';
 import type { MembershipProof } from '@usafe/shared';
@@ -45,13 +45,14 @@ export async function buildSupportProof(
   credential: CachedCredential,
 ): Promise<MembershipProof> {
   const commitmentBytes = await commitment(secret);
-  const nullifier = await supportNullifier(secret, complaintId);
   const context = `support|${complaintId}`;
+  // The nullifier is bound to the public commitment and context, so the server
+  // can recompute it without ever seeing the student secret (M038).
+  const nullifier = await mockNullifier(commitmentBytes, context);
 
   const data: MockProofData = {
     commitment: bytesToHex(commitmentBytes),
     path: credential.proof,
-    leafIndex: credential.leafIndex,
     context,
   };
 

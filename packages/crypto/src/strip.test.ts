@@ -164,13 +164,20 @@ describe('stripImage', () => {
     expect(result.file).toBe(file);
   });
 
-  it('returns stripped:false for an image when canvas is unavailable', async () => {
-    const jpeg = buildJpegWithExif();
+  it('strips a GPS JPEG even when canvas is unavailable (byte fallback)', async () => {
+    const jpeg = buildJpegWithExif({ gps: true });
     const file = fileFromBytes(jpeg, 'image/jpeg', 'photo.jpg');
+
+    // The input really does carry GPS EXIF before stripping.
+    expect(hasGpsExif(jpeg)).toBe(true);
+
     const result = await stripImage(file);
-    // No OffscreenCanvas in this environment, so cannot strip.
-    expect(result.stripped).toBe(false);
-    expect(result.file).toBe(file);
+    expect(result.stripped).toBe(true);
+
+    const strippedBytes = new Uint8Array(await result.file.arrayBuffer());
+    // Verified with the independent byte-level EXIF reader, never the input.
+    expect(hasExifSegment(strippedBytes)).toBe(false);
+    expect(hasGpsExif(strippedBytes)).toBe(false);
   });
 
   it('returns stripped:false for a PNG when canvas is unavailable', async () => {

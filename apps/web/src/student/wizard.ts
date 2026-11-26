@@ -21,6 +21,7 @@ import { select } from '../ui/select';
 import { toast } from '../ui/toast';
 import {
   connectWallet,
+  clearFakeWalletSession,
   isConnected,
   getAddress,
   isFakeWalletMode,
@@ -397,6 +398,10 @@ function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
     'Connect your Lace wallet to sign the enrolment message. Your wallet address is never stored with your complaint.';
   section.append(intro);
 
+  // The fake wallet derives a deterministic signature from this passphrase.
+  // It is never persisted; the real Lace wallet ignores it.
+  let fakePassphrase = '';
+
   if (isFakeWalletMode()) {
     const warn = document.createElement('div');
     warn.className =
@@ -404,6 +409,26 @@ function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
     warn.textContent =
       'DEVELOPMENT ONLY: fake wallet active. Do not use for real enrolments.';
     section.append(warn);
+
+    const passphraseLabel = document.createElement('label');
+    passphraseLabel.htmlFor = 'fake-wallet-passphrase';
+    passphraseLabel.className = 'text-sm font-medium text-slate-700';
+    passphraseLabel.textContent = 'Fake wallet passphrase (development only)';
+    const passphraseInput = document.createElement('input');
+    passphraseInput.type = 'password';
+    passphraseInput.id = 'fake-wallet-passphrase';
+    passphraseInput.autocomplete = 'off';
+    passphraseInput.className =
+      'w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-light';
+    passphraseInput.placeholder = 'Type the same passphrase to get the same wallet';
+    passphraseInput.addEventListener('input', () => {
+      fakePassphrase = passphraseInput.value;
+    });
+    const hint = document.createElement('p');
+    hint.className = 'text-xs text-slate-500';
+    hint.textContent =
+      'The same passphrase always produces the same fake address and signature. It is kept in memory only.';
+    section.append(passphraseLabel, passphraseInput, hint);
   }
 
   const connected = state.walletConnected;
@@ -411,7 +436,13 @@ function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
 
   const handleConnect = async (): Promise<void> => {
     try {
-      await connectWallet();
+      if (isFakeWalletMode() && fakePassphrase.trim() === '') {
+        toast('Type a fake wallet passphrase first.', 'danger');
+        return;
+      }
+      await connectWallet(
+        isFakeWalletMode() ? { passphrase: fakePassphrase } : undefined,
+      );
       onChange({
         walletConnected: isConnected(),
       });
@@ -517,6 +548,7 @@ function renderStep4(state: WizardState, onChange: WizardChange): HTMLElement {
     variant: 'secondary',
     onClick: () => {
       clearStudentSecret();
+      clearFakeWalletSession();
       clearPersisted();
       onChange({
         step: 1,

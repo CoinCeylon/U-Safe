@@ -26,6 +26,27 @@ export interface PortalFrame {
 
 type FrameInput = string | FrameOptions;
 
+/**
+ * AGENT.md section 6: every portal shows the mock-mode warning only when
+ * `/api/health` reports `mock`. Kept as a pure predicate so it can be tested.
+ */
+export function shouldShowMockBanner(mode: string | undefined): boolean {
+  return mode === 'mock';
+}
+
+// Creates the hidden banner and reveals it after `/api/health` resolves. The
+// same element instance stays mounted, so a late health response still makes
+// it visible (unlike the old landing-page clone that was never updated).
+function buildMockBanner(): HTMLElement {
+  const banner = document.createElement('div');
+  banner.className =
+    'border-b border-warning bg-warning-light px-4 py-2 text-sm font-medium text-warning';
+  banner.textContent = 'MOCK MODE: anonymity is simulated';
+  banner.setAttribute('role', 'status');
+  banner.hidden = true;
+  return banner;
+}
+
 function normalizeOptions(input: FrameInput): FrameOptions {
   if (typeof input === 'string') {
     return { portalName: input };
@@ -113,6 +134,8 @@ export function createFrame(input: FrameInput = 'Portal'): PortalFrame {
   }
   header.append(roleBadge);
 
+  const mockBanner = buildMockBanner();
+
   const body = document.createElement('div');
   body.className = 'flex flex-1 flex-col md:flex-row';
 
@@ -142,7 +165,25 @@ export function createFrame(input: FrameInput = 'Portal'): PortalFrame {
     content.focus();
   });
 
-  root.append(skipLink, header, body, toastHost);
+  root.append(skipLink, header, mockBanner, body, toastHost);
+
+  // Ask the server for its chain mode once. Until it answers the banner stays
+  // hidden; if the server cannot be reached it also stays hidden.
+  if (typeof fetch === 'function') {
+    void fetch('/api/health')
+      .then(async (response) => {
+        if (!response.ok) {
+          return;
+        }
+        const health = (await response.json()) as { mode?: unknown };
+        mockBanner.hidden = !shouldShowMockBanner(
+          typeof health.mode === 'string' ? health.mode : undefined,
+        );
+      })
+      .catch(() => {
+        // Leave the banner hidden when health is unavailable.
+      });
+  }
 
   const setRoleBadge = (label: string | null): void => {
     if (label === null || label === '') {

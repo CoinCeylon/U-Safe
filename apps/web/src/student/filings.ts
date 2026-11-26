@@ -119,6 +119,20 @@ export async function updateFilingStatus(
   await opened.put(STORE_KEY, JSON.stringify(receipts));
 }
 
+/**
+ * Counts receipts filed in the same local year-month as `date`. Used to show
+ * the remaining monthly filing slots (M057) from local receipts only, without
+ * asking the server about a student.
+ */
+export function countFilingsInMonth(
+  receipts: FilingReceipt[],
+  date: Date = new Date(),
+): number {
+  const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  return receipts.filter((receipt) => receipt.filedAt.slice(0, 7) === yearMonth)
+    .length;
+}
+
 /** Returns the receipts newest first (by filedAt). */
 export function sortReceiptsNewestFirst(receipts: FilingReceipt[]): FilingReceipt[] {
   return [...receipts].sort(

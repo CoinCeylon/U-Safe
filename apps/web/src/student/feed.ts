@@ -7,9 +7,17 @@
 import { toast } from '../ui/toast';
 import { button } from '../ui/button';
 import { friendlyError } from '../lib/offline';
-import { getStudentSecret } from './unlock';
-import { getCachedCredential, refreshCredential } from './credential';
+import { getStudentSecret, getUnlockedUniversityId } from './unlock';
+import {
+  getCachedCredential,
+  refreshCredential,
+  stopWatchingRoots,
+  watchRoots,
+} from './credential';
 import { ensureUnlocked } from './session';
+import { getCommunityKey } from './submit';
+import { loadComplaintDescription } from './complaintContent';
+import { rememberComplaintText } from './complaint-text';
 
 interface FeedComplaint {
   id: string;
@@ -18,6 +26,7 @@ interface FeedComplaint {
   status: string;
   supportCount: number;
   ownerRole: string;
+  payloadHash: string;
   createdAt: string;
   escalated: boolean;
 }
@@ -31,21 +40,51 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
     eventSource.close();
     eventSource = null;
   }
+  // Stop any previous root watcher before starting a new one for this view.
+  stopWatchingRoots();
 
   if (getStudentSecret() === null) {
     outlet.replaceChildren(unlockPrompt(outlet));
     return;
   }
 
-  const cred = getCachedCredential();
+  // The credential cache is in memory only. After a fresh enrolment (or a
+  // module reload) it can be empty even though the student is unlocked, so
+  // rebuild it here instead of telling the student to "go back to the feed".
+  let cred = getCachedCredential();
   if (!cred) {
-    outlet.innerHTML =
-      '<p class="text-sm text-slate-600">Your enrollment credential is not ready yet. Go back to the feed and unlock your student secret again.</p>';
-    return;
+    const universityId =
+      getUnlockedUniversityId() ??
+      sessionStorage.getItem('usafe-student-university');
+    if (universityId === null) {
+      outlet.innerHTML =
+        '<p class="text-sm text-slate-600">Your enrollment credential is not ready yet. Go back to the feed and unlock your student secret again.</p>';
+      return;
+    }
+    try {
+      cred = await refreshCredential(universityId);
+    } catch {
+      outlet.innerHTML =
+        '<p class="text-sm text-slate-600">Could not rebuild your enrollment credential. Unlock your student secret and try again.</p>';
+      return;
+    }
   }
 
   const universityId = cred.universityId;
   const univParam = encodeURIComponent(universityId);
+  const secret = getStudentSecret();
+
+  // Fetch the community key once for this view so cards can decrypt their
+  // sealed payloads. A missing key leaves descriptions unavailable rather
+  // than showing a misleading placeholder.
+  let communityKey: Uint8Array | null = null;
+  if (secret !== null) {
+    try {
+      communityKey = await getCommunityKey(fetch, secret, universityId, cred);
+    } catch {
+      communityKey = null;
+    }
+  }
 
   const wrapper = document.createElement('section');
   wrapper.className = 'flex flex-col gap-3 max-w-xl mx-auto py-2';
@@ -113,7 +152,7 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
 
-      renderList(list, complaints);
+      renderList(list, complaints, universityId, communityKey);
       return true;
     } catch (error) {
       // Error details are deliberately not shown to the student, but the
@@ -168,6 +207,9 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
 
   if (await loadComplaints()) {
     connectEvents();
+    // Refresh the local credential when the university root changes, so a
+    // student who enrolled before newer students can still support (M053).
+    watchRoots(universityId);
   }
 }
 
@@ -191,7 +233,12 @@ function renderLoadError(
   outlet.append(message, retryButton);
 }
 
-function renderList(outlet: HTMLElement, complaints: FeedComplaint[]): void {
+function renderList(
+  outlet: HTMLElement,
+  complaints: FeedComplaint[],
+  universityId: string,
+  communityKey: Uint8Array | null,
+): void {
   outlet.replaceChildren();
   if (complaints.length === 0) {
     const empty = document.createElement('p');
@@ -229,10 +276,27 @@ function renderList(outlet: HTMLElement, complaints: FeedComplaint[]): void {
 
     const description = document.createElement('p');
     description.className = 'mt-2 text-sm text-slate-600';
-    description.textContent =
-      complaint.ownerRole === 'ugc'
-        ? 'Details restricted to the UGC'
-        : 'Open the complaint to read its encrypted payload.';
+    if (complaint.ownerRole === 'ugc') {
+      description.textContent = 'Details restricted to the UGC';
+    } else {
+      description.textContent = 'Loading description…';
+      void loadComplaintDescription({
+        payloadHash: complaint.payloadHash,
+        ownerRole: complaint.ownerRole,
+        communityKey,
+      }).then((content) => {
+        if (content.kind === 'text') {
+          description.textContent = content.text;
+          // Feed text is legitimately readable, so it also feeds the M059
+          // duplicate-suggestion cache.
+          rememberComplaintText(universityId, complaint.id, content.text);
+        } else if (content.kind === 'restricted') {
+          description.textContent = 'Details restricted to the UGC';
+        } else {
+          description.textContent = 'Description unavailable.';
+        }
+      });
+    }
     card.append(description);
 
     const link = document.createElement('a');

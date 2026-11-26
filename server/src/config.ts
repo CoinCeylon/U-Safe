@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import './env.js';
 
 const envSchema = z.object({
   NODE_ENV: z.string().default('development'),

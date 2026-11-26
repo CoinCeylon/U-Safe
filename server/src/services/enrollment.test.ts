@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import type { Config } from '../config.js';
 import { runMigrations } from '../db/migrate.js';
+import { MockLedger } from '@usafe/chain';
 import { EnrollmentService } from './enrollment.js';
-import { StubLedger } from './ledger.js';
 import type { Mailer } from './mailer.js';
 import { emailHash } from './roster.js';
 import { TicketService } from './tickets.js';
@@ -43,7 +43,7 @@ const mailer: Mailer = { send: () => Promise.resolve() };
 let db: Database.Database;
 let tickets: TicketService;
 let enrollment: EnrollmentService;
-let ledger: StubLedger;
+let ledger: MockLedger;
 
 beforeEach(() => {
   db = new Database(':memory:');
@@ -60,7 +60,7 @@ beforeEach(() => {
     'INSERT INTO roster (university_id, email_hash) VALUES (?, ?)',
   ).run('u1', emailHash(salt, secondEmail));
   tickets = new TicketService(db, salt);
-  ledger = new StubLedger();
+  ledger = new MockLedger(db);
   enrollment = new EnrollmentService(db, tickets, ledger);
 });
 
@@ -136,6 +136,36 @@ describe('EnrollmentService.enroll', () => {
       used: number;
     };
     expect(used.used).toBe(0);
+  });
+
+  it('rolls back the ticket and roster when the ledger commit fails', async () => {
+    const failing = {
+      enrollCommitment: () => {
+        throw new Error('unexpected fallback');
+      },
+      prepareEnrollment: () =>
+        Promise.resolve({
+          receipt: { leafIndex: 0, path: [], root: '0'.repeat(64) },
+          commit: () => {
+            throw new Error('ledger write failed');
+          },
+        }),
+    };
+    const service = new EnrollmentService(db, tickets, failing);
+    const ticket = ticketFor(email);
+
+    await expect(service.enroll(ticket, commitment)).rejects.toThrow(
+      'ledger write failed',
+    );
+
+    const used = db
+      .prepare('SELECT used FROM tickets WHERE id = ?')
+      .get(ticket) as { used: number };
+    expect(used.used).toBe(0);
+    const roster = db
+      .prepare('SELECT enrolled_at FROM roster WHERE email_hash = ?')
+      .get(emailHash(salt, email)) as { enrolled_at: string | null };
+    expect(roster.enrolled_at).toBeNull();
   });
 
   it('rejects a duplicate commitment without burning the ticket', async () => {

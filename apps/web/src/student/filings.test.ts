@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryStorage, SecureStore, type SecureStore as Store } from '@usafe/crypto';
 import {
+  countFilingsInMonth,
   loadFilingReceipts,
   saveFilingReceipt,
   sortReceiptsNewestFirst,
@@ -84,6 +85,17 @@ describe('filing receipts (M061)', () => {
 
     const loaded = await loadFilingReceipts(store);
     expect(loaded[0]?.lastStatus).toBeUndefined();
+  });
+
+  it('counts this month\'s filings for the slots display (M057)', () => {
+    const receipts = [
+      makeReceipt('nov-1', '2026-11-02T10:00:00.000Z'),
+      makeReceipt('nov-2', '2026-11-25T10:00:00.000Z'),
+      makeReceipt('oct', '2026-10-31T10:00:00.000Z'),
+    ];
+    expect(countFilingsInMonth(receipts, new Date(2026, 10, 25))).toBe(2);
+    expect(countFilingsInMonth(receipts, new Date(2026, 11, 1))).toBe(0);
+    expect(countFilingsInMonth([], new Date(2026, 10, 25))).toBe(0);
   });
 
   it('sorts receipts newest first', () => {

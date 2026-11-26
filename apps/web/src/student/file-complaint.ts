@@ -13,7 +13,7 @@
 // visible progress list. A failure shows the failed step and a retry button;
 // retrying reuses the cached encrypted blobs, so nothing is uploaded twice.
 
-import { MAX_EVIDENCE_FILES } from '@usafe/shared';
+import { FILING_LIMIT_PER_MONTH, MAX_EVIDENCE_FILES } from '@usafe/shared';
 import { button } from '../ui/button';
 import { toast } from '../ui/toast';
 import { friendlyError, isOfflineError, OFFLINE_MESSAGE } from '../lib/offline';
@@ -31,7 +31,11 @@ import { loadOpenComplaintTexts, type OpenComplaintText } from './complaint-text
 import { findSimilarComplaints, MAX_DUPLICATE_SUGGESTIONS } from './similar';
 import { getCachedCredential, refreshCredential } from './credential';
 import { getStudentSecret } from './unlock';
-import { saveFilingReceipt } from './filings';
+import {
+  countFilingsInMonth,
+  loadFilingReceipts,
+  saveFilingReceipt,
+} from './filings';
 import {
   FilingLimitError,
   SUBMIT_STEPS,
@@ -96,8 +100,9 @@ function previewFor(file: File, kind: EvidenceKind): {
 }
 
 export function renderFileComplaintForm(outlet: HTMLElement): void {
-  // Filing slots remaining (mock value: there is no usage endpoint yet).
-  const slotsLeft = 3;
+  // Filing slots remaining, derived from this browser's receipts for the
+  // current year-month (M057). The locked limit is FILING_LIMIT_PER_MONTH.
+  let slotsLeft = FILING_LIMIT_PER_MONTH;
 
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-4 max-w-md mx-auto py-4';
@@ -437,6 +442,29 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
 
   const submit = button({ label: 'Submit complaint', type: 'submit' });
   form.append(submit);
+
+  // Receipts are encrypted with the student secret, so this only succeeds
+  // once the secret is unlocked; the form is still usable before that and the
+  // server enforces the limit regardless.
+  if (getStudentSecret() !== null) {
+    void loadFilingReceipts()
+      .then((receipts) => {
+        const used = countFilingsInMonth(receipts);
+        slotsLeft = Math.max(0, FILING_LIMIT_PER_MONTH - used);
+        slotsInfo.textContent = `Filing slots left this month: ${slotsLeft}`;
+        if (slotsLeft === 0) {
+          submit.disabled = true;
+          const limitNote = document.createElement('p');
+          limitNote.className = 'text-xs text-warning';
+          limitNote.textContent =
+            'You have used both filing slots this month. You can support existing complaints instead.';
+          form.append(limitNote);
+        }
+      })
+      .catch(() => {
+        // A storage failure must not block the form.
+      });
+  }
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();

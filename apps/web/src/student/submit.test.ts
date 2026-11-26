@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  commitment,
   decryptFile,
   exportPrivateKeyJwk,
   exportPublicKeyJwk,
-  filingNullifier,
   generateRoleKeyPair,
   importPrivateKeyJwk,
+  mockNullifier,
   parseEncryptedChunks,
-  supportNullifier,
   unwrapAesKeyBytes,
   type EncryptedChunk,
 } from '@usafe/crypto';
@@ -251,18 +251,28 @@ describe('filing proof helpers', () => {
       0,
       credential,
     );
-    const expected = await filingNullifier(secret, YEAR_MONTH, 0);
+    const ownCommitment = await commitment(secret);
+    const expected = await mockNullifier(
+      ownCommitment,
+      `file|${YEAR_MONTH}|0`,
+    );
     expect(proof.nullifier).toBe(bytesToHex(expected));
     expect(proof.universityId).toBe(UNIVERSITY_ID);
-    expect(JSON.parse(proof.data)).toMatchObject({
-      context: `file|${YEAR_MONTH}|0`,
-      leafIndex: credential.leafIndex,
-    });
+    const data = JSON.parse(proof.data) as {
+      context: string;
+      leafIndex?: number;
+    };
+    expect(data.context).toBe(`file|${YEAR_MONTH}|0`);
+    expect(data.leafIndex).toBeUndefined();
   });
 
   it('derives the delivery proof nullifier without touching filing slots', async () => {
     const proof = await buildDeliveryProof(secret, UNIVERSITY_ID, credential);
-    const expected = await supportNullifier(secret, 'community-key-delivery');
+    const ownCommitment = await commitment(secret);
+    const expected = await mockNullifier(
+      ownCommitment,
+      'support|community-key-delivery',
+    );
     expect(proof.nullifier).toBe(bytesToHex(expected));
   });
 });
@@ -279,14 +289,56 @@ describe('SubmissionPipeline (M060)', () => {
     });
   });
 
-  it('files a complaint with two files end to end', async () => {
+  it('does not call fetch with the pipeline object as this', async () => {
+    const server = makeFakeServer();
+    const receipts: FilingReceipt[] = [];
+    // Browsers throw "Illegal invocation" when window.fetch is called with an
+    // arbitrary object as `this`; Node's fetch is forgiving, so this guard
+    // reproduces the browser behaviour.
+    const strictFetch = function (
+      this: unknown,
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        return Promise.reject(
+          new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation"),
+        );
+      }
+      return server.fetchImpl(input, init);
+    } as typeof fetch;
+
+    const pipeline = new SubmissionPipeline(
+      baseInput(),
+      secret,
+      () => Promise.resolve(credential),
+      {
+        fetchImpl: strictFetch,
+        queueDelayMinMs: 0,
+        queueDelayMaxMs: 0,
+        now: () => FIXED_NOW,
+        saveReceipt: (receipt) => {
+          receipts.push(receipt);
+          return Promise.resolve();
+        },
+      },
+    );
+
+    const result = await pipeline.run(() => {});
+    expect(result.complaintId).toBe('c-1');
+    expect(server.complaintCalls).toHaveLength(1);
+  });
+
+  it('files a complaint with two images and one video end to end', async () => {
     const server = makeFakeServer();
     const receipts: FilingReceipt[] = [];
     const imageBytes = 'not-really-a-jpeg-but-fine-for-the-pipeline';
+    const secondImageBytes = 'second-photo-bytes-abcdef';
     const videoBytes = 'fake-mp4-bytes-0123456789';
     const input = baseInput();
     input.evidenceFiles = [
       makeFile(imageBytes, 'photo.png', 'image/png'),
+      makeFile(secondImageBytes, 'photo-2.png', 'image/png'),
       makeFile(videoBytes, 'clip.mp4', 'video/mp4'),
     ];
 
@@ -299,12 +351,12 @@ describe('SubmissionPipeline (M060)', () => {
     expect(result.complaintId).toBe('c-1');
     expect(receipts).toHaveLength(1);
     expect(receipts[0]?.complaintId).toBe('c-1');
-    expect(receipts[0]?.evidence).toHaveLength(2);
+    expect(receipts[0]?.evidence).toHaveLength(3);
     expect(server.communityKeyCalls).toBe(1);
 
-    // Two evidence blobs plus one sealed payload blob, nothing more.
-    expect(server.blobCalls).toHaveLength(3);
-    const payloadBlob = server.blobCalls[2]!;
+    // Three evidence blobs plus one sealed payload blob, nothing more.
+    expect(server.blobCalls).toHaveLength(4);
+    const payloadBlob = server.blobCalls[3]!;
     expect(server.complaintCalls).toHaveLength(1);
     const call = server.complaintCalls[0]!;
 
@@ -313,7 +365,10 @@ describe('SubmissionPipeline (M060)', () => {
     expect(call.payloadHash).toBe(await sha256Hex(payloadBlob.bytes));
     expect(call.payloadLocator).toBe(call.payloadHash);
     expect(call.proofContext).toBe(`file|${YEAR_MONTH}|0`);
-    const expectedNullifier = await filingNullifier(secret, YEAR_MONTH, 0);
+    const expectedNullifier = await mockNullifier(
+      await commitment(secret),
+      `file|${YEAR_MONTH}|0`,
+    );
     expect(call.proofNullifier).toBe(bytesToHex(expectedNullifier));
 
     // The envelope opens with the community key and carries the manifest.
@@ -331,9 +386,10 @@ describe('SubmissionPipeline (M060)', () => {
       }>;
     };
     expect(payload.description).toBe(input.description);
-    expect(payload.evidence).toHaveLength(2);
+    expect(payload.evidence).toHaveLength(3);
     expect(payload.evidence.map((entry) => entry.name)).toEqual([
       'photo.png',
+      'photo-2.png',
       'clip.mp4',
     ]);
 

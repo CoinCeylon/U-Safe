@@ -45,7 +45,10 @@ export const MAX_EVIDENCE_FILE_BYTES = readPositiveInt(
   25 * 1024 * 1024,
 );
 
-export const CATEGORIES = [
+// Default allowed values. These tuples define the literal union types in
+// types.ts, so the type system stays checkable while the runtime lists below
+// can still be narrowed/reordered with environment variables.
+export const DEFAULT_CATEGORIES = [
   'verbal',
   'physical',
   'sexual',
@@ -54,12 +57,49 @@ export const CATEGORIES = [
   'other',
 ] as const;
 
-export const URGENCIES = ['normal', 'urgent'] as const;
+export const DEFAULT_URGENCIES = ['normal', 'urgent'] as const;
 
-export const STATUSES = ['not_started', 'pending_investigation', 'finished'] as const;
+export const DEFAULT_STATUSES = [
+  'not_started',
+  'pending_investigation',
+  'finished',
+] as const;
 
-export const NORMAL_DEADLINE_SECONDS = 7 * 24 * 60 * 60;
-export const URGENT_DEADLINE_SECONDS = 24 * 60 * 60;
+// Reads a comma-separated environment variable and keeps only values that are
+// in the allowed default list, so a typo can never introduce an unknown value
+// that zod (and the rest of the system) does not understand.
+const readEnumList = <T extends string>(
+  key: string,
+  allowed: readonly T[],
+): readonly T[] => {
+  const value = readEnv(key);
+  if (value === undefined) {
+    return allowed;
+  }
+  const parsed = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry): entry is T => (allowed as readonly string[]).includes(entry));
+  return parsed.length > 0 ? parsed : allowed;
+};
+
+export const CATEGORIES: readonly (typeof DEFAULT_CATEGORIES)[number][] =
+  readEnumList('CATEGORIES', DEFAULT_CATEGORIES);
+
+export const URGENCIES: readonly (typeof DEFAULT_URGENCIES)[number][] =
+  readEnumList('URGENCIES', DEFAULT_URGENCIES);
+
+export const STATUSES: readonly (typeof DEFAULT_STATUSES)[number][] =
+  readEnumList('STATUSES', DEFAULT_STATUSES);
+
+export const NORMAL_DEADLINE_SECONDS = readPositiveInt(
+  'NORMAL_DEADLINE_SECONDS',
+  7 * 24 * 60 * 60,
+);
+export const URGENT_DEADLINE_SECONDS = readPositiveInt(
+  'URGENT_DEADLINE_SECONDS',
+  24 * 60 * 60,
+);
 export const DEMO_SLA_SECONDS = readOptionalPositiveInt('DEMO_SLA_SECONDS');
 
 export const SUPPORT_ALERT_THRESHOLD = readPositiveInt('SUPPORT_ALERT_THRESHOLD', 10);

@@ -36,11 +36,16 @@ const main = async (): Promise<void> => {
     void shutdown('SIGTERM');
   });
 
-  await app.listen({ port: config.PORT, host: config.HOST });
-  app.log.info(
-    { port: config.PORT, host: config.HOST, mode: config.CHAIN_MODE },
-    'server started',
-  );
+  await app.listen({
+    port: config.PORT,
+    host: config.HOST,
+    // Suppress Fastify's "Server listening at <address>" line: it contains
+    // the bound address, and startup logs may carry no fields.
+    listenTextResolver: () => '',
+  });
+  // No startup fields are logged (AGENT.md section 4): the health endpoint
+  // reports the chain mode to clients without writing it to the log.
+  app.log.info('server started');
 };
 
 main().catch((error: unknown) => {

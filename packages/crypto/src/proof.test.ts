@@ -52,21 +52,23 @@ describe('proveMembershipMock / verifyMembershipMock (M038)', () => {
     expect(proof.nullifier).toHaveLength(64);
     expect(proof.universityId).toBe('');
 
-    // data must contain the path, commitment, leafIndex and context
+    // data must contain the path, commitment and context, but never the leaf
+    // index (M053).
     const data = JSON.parse(proof.data) as {
       commitment: string;
       path: string[];
-      leafIndex: number;
+      leafIndex?: number;
       context: string;
     };
     expect(data.commitment).toBe(commitmentHex);
     expect(data.path).toEqual(path);
-    expect(data.leafIndex).toBe(leafIndex);
+    expect(data.leafIndex).toBeUndefined();
     expect(data.context).toBe('file|2024-01|0');
 
     const valid = await verifyMembershipMock(proof, {
       roots: [root],
       usedNullifiers: new Set(),
+      leafIndex,
     });
     expect(valid).toBe(true);
   });
@@ -91,6 +93,7 @@ describe('proveMembershipMock / verifyMembershipMock (M038)', () => {
     const valid = await verifyMembershipMock(proof, {
       roots: [root],
       usedNullifiers: new Set(),
+      leafIndex,
     });
     expect(valid).toBe(true);
   });
@@ -121,6 +124,7 @@ describe('proveMembershipMock / verifyMembershipMock (M038)', () => {
     const valid = await verifyMembershipMock(proof, {
       roots: ['0000000000000000000000000000000000000000000000000000000000000000'],
       usedNullifiers: new Set(),
+      leafIndex: 0,
     });
     expect(valid).toBe(false);
   });
@@ -142,6 +146,7 @@ describe('proveMembershipMock / verifyMembershipMock (M038)', () => {
     const valid = await verifyMembershipMock(proof, {
       roots: [root],
       usedNullifiers: used,
+      leafIndex: 0,
     });
     expect(valid).toBe(false);
   });
@@ -167,6 +172,57 @@ describe('proveMembershipMock / verifyMembershipMock (M038)', () => {
     };
 
     const valid = await verifyMembershipMock(tampered, {
+      roots: [root],
+      usedNullifiers: new Set(),
+      leafIndex: 1,
+    });
+    expect(valid).toBe(false);
+  });
+
+  it('rejects an arbitrary nullifier that is not bound to the commitment', async () => {
+    const secret = randomBytes(32);
+    const commitmentHex = await commitmentFromSecret(secret);
+    const leaves = [commitmentHex];
+    const { root } = await treeRootAndPath(leaves, 0);
+
+    const proof = await proveMembershipMock(secret, leaves, 0, 'support|x');
+    const forged = { ...proof, nullifier: 'f'.repeat(64) };
+    const valid = await verifyMembershipMock(forged, {
+      roots: [root],
+      usedNullifiers: new Set(),
+      leafIndex: 0,
+    });
+    expect(valid).toBe(false);
+  });
+
+  it('rejects an empty-path proof that claims commitment === root', async () => {
+    const secret = randomBytes(32);
+    const commitmentHex = await commitmentFromSecret(secret);
+    const leaves = [commitmentHex];
+    await treeRootAndPath(leaves, 0);
+
+    const proof = await proveMembershipMock(secret, leaves, 0, 'support|x');
+    const forged = {
+      ...proof,
+      root: commitmentHex,
+      data: JSON.stringify({ commitment: commitmentHex, path: [], context: 'support|x' }),
+    };
+    const valid = await verifyMembershipMock(forged, {
+      roots: [commitmentHex],
+      usedNullifiers: new Set(),
+      leafIndex: 0,
+    });
+    expect(valid).toBe(false);
+  });
+
+  it('rejects a proof when the server cannot resolve the leaf index', async () => {
+    const secret = randomBytes(32);
+    const commitmentHex = await commitmentFromSecret(secret);
+    const leaves = [commitmentHex];
+    const { root } = await treeRootAndPath(leaves, 0);
+
+    const proof = await proveMembershipMock(secret, leaves, 0, 'support|x');
+    const valid = await verifyMembershipMock(proof, {
       roots: [root],
       usedNullifiers: new Set(),
     });

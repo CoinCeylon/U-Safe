@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import type { Config } from '../config.js';
 import { runMigrations } from '../db/migrate.js';
+import { deliverCommunityKey } from './communityKey.js';
 import type { ComplaintLedger } from './ledger.js';
 import type { Mailer } from './mailer.js';
 
@@ -129,6 +130,26 @@ describe('POST /api/universities/:id/community-key', () => {
       payload: { proof: { any: 'accepted by the stub ledger' } },
     });
     expect(response.statusCode).toBe(503);
+  });
+});
+
+describe('deliverCommunityKey', () => {
+  it('rejects an empty delivery secret with an actionable error', async () => {
+    await expect(deliverCommunityKey(db, 'u1', '')).rejects.toThrow(
+      'community key delivery not configured',
+    );
+  });
+
+  it('rejects a secret that does not match the stored backup', async () => {
+    await expect(
+      deliverCommunityKey(db, 'u1', 'a-different-secret'),
+    ).rejects.toThrow('community key backup unreadable');
+  });
+
+  it('returns the key when the delivery secret matches', async () => {
+    await expect(deliverCommunityKey(db, 'u1', DELIVERY_SECRET)).resolves.toBe(
+      encodedKey,
+    );
   });
 });
 

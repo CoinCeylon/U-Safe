@@ -87,9 +87,11 @@ Record package names, versions and adaptations here.
 - Mesh's Node built-in imports (for example `pbkdf2Sync` from `crypto`) are provided by
   `vite-plugin-node-polyfills` ^0.28.0 (devDependency of `@usafe/web`) in `apps/web/vite.config.ts`.
   Without it the production build fails with `"pbkdf2Sync" is not exported by "__vite-browser-external"`.
-- `vite` ^6.4.6 is a root devDependency because `vitest` 5 declares it as a peer, and
-  `npm install` runs with `--legacy-peer-deps` (the `@types/node` peer conflict otherwise
-  stops the install).
+- `vite` ^6.4.6 is a root devDependency because Vitest declares it as a peer. Vitest is
+  ^4.1.12 rather than 5: Vitest 5's optional `@types/node` peer requires `^22 || >=24`,
+  which conflicts with the locked Node.js 20 types (`@types/node` ^20.19.43) and makes a
+  plain `npm install` fail with ERESOLVE. Vitest 4 accepts `@types/node` ^20 and Node 20,
+  so `npm install` succeeds with no flags or `--legacy-peer-deps`.
 - `student/main.ts` starts the university request once at module load without awaiting
   it, and the Home route waits on that shared promise. The router renders a first visit
   twice (it sets the hash), and two identical requests in flight left one stuck in the
@@ -216,3 +218,150 @@ Record package names, versions and adaptations here.
   screen-reader label, toasts announce through `aria-live="polite"`, and dynamic
   progress areas use `role="status"`. The help page is fully static, so it works
   with no network at all.
+
+## Audit fixes (2026-11-25)
+
+These entries record the changes made in response to the M001-M062 audit. The
+fixing agent did not commit anything; all changes are left for human review.
+
+- **M014:** zero-node precomputation now uses its own `merkle-zero` domain tag,
+  distinct from `merkle-inner`. `MerkleTree.root()` is an alias for `getRoot()`.
+  `MerkleTree.verify(leaf, proof, index, root, adapter, expectedDepth)` now
+  rejects any proof whose length is not the expected tree depth; the default is
+  `MERKLE_TREE_DEPTH` (20). Tests cover a valid two-leaf proof and an empty-path
+  forgery.
+- **M017:** `sealPayload` now returns the SHA-256 of the exact sealed bytes
+  (`iv || ciphertext`), not the plaintext JSON hash, and `openPayload` verifies
+  that hash before decrypting. The test recomputes the digest from the stored
+  sealed bytes and asserts it is not the plaintext hash.
+- **M018:** when no canvas is available (Node/tests), `stripImage` now removes
+  the JPEG APP1 EXIF segment byte-for-byte instead of giving up. A GPS-tagged
+  JPEG fixture is run through `stripImage` and checked with the independent
+  byte-level EXIF reader. PNG/WebP still rely on the browser canvas path and are
+  covered by the recorded human test.
+- **M019:** the crypto playground hashes a `File` built from the serialized
+  encrypted chunks, and the label now correctly says "SHA-256 of encrypted
+  bytes". A fixed SHA-256 vector test (`abc`) and an encrypted-bytes test were
+  added.
+- **M020:** a reload is modelled by constructing a second `SecureStore` over the
+  same storage backend; the value decrypts. Real IndexedDB persistence is still
+  browser-only and is covered by the human test report; the unit suite does not
+  include a fake IndexedDB implementation.
+- **M022:** the playground now has an editable ciphertext textarea. Decryption
+  parses the edited hex, so changing one character produces an error (Human Test
+  2, step 4). The report is in `docs/HUMAN_TEST_2_REPORT.md`.
+- **M025:** `POST /api/university/:id/roster` now runs behind
+  `requireStaff(['registrar', 'admin'])`. `requireStaff` accepts a single role
+  or an array. Tests cover an unauthenticated rejection, a 100-row import and
+  per-line error reporting.
+- **M029:** `MockLedger.prepareEnrollment` computes the leaf/path/root without
+  writing; `EnrollmentService` then burns the ticket, checks the ceiling, writes
+  the leaf/root and marks the roster row in one synchronous SQLite transaction.
+  The ticket is peeked (not consumed) only to prepare the ledger. A
+  failure-injection test proves that a ledger commit error rolls back the ticket
+  and roster row. The old synchronous `StubLedger` test double has no
+  `prepareEnrollment`; when it is used the ledger call remains a fallback after
+  the transaction, but production (`server/src/index.ts`) always uses
+  `MockLedger` and therefore the single-transaction path.
+- **M032:** `POST /api/auth/challenge` issues a single-use, five-minute nonce
+  kept in memory only. `POST /api/auth/login` consumes it and verifies the CIP-8
+  `signData` signature with Mesh's `checkSignature` against the staff wallet
+  address. The old `GET` challenge route is gone. Tests cover a wrong signature,
+  replay, expiry and `requireStaff` rejection. A full happy-path Lace signature
+  still requires a real wallet and is a human test.
+- **M038:** mock nullifiers are now derived from the **public commitment** and
+  the proof context (`mockNullifier`, tag `mock-nullifier`), so the server can
+  recompute them without the student secret. Verification requires exactly
+  `MERKLE_TREE_DEPTH` siblings, recomputes the nullifier, rejects unsupported
+  contexts and rejects any unbound/fabricated nullifier. The leaf index is no
+  longer in the proof; the server looks it up in the public leaf list, which
+  also binds the commitment to the claimed university. `try:forge` now also
+  sends a real-root/empty-path proof.
+- **M039:** complaint ids come from `ml_complaint_sequence` (migration 005)
+  inside the insert transaction, giving `c-000001`, `c-000002`, ... instead of
+  timestamps. The existing two-slot nullifier rule still enforces the monthly
+  limit.
+- **M040:** support verification resolves the commitment in the complaint
+  university's leaf list, so a caller cannot claim another university's proof.
+  The support context id must equal the route's complaint id, and the reused
+  support nullifier is rejected with the specific message before proof
+  verification so the UI can treat it quietly.
+- **M048 / AGENT.md section 6:** the mock banner now lives in the shared
+  `ui/frame.ts` and is revealed when `/api/health` reports `mock`. The landing
+  page no longer clones a hidden banner, so it appears after health resolves.
+  All portals use the frame. The visibility predicate is unit-tested.
+- **M050:** the fake-wallet wizard step now has a passphrase field, requires it
+  before connecting, and passes it to `connectWallet`. The passphrase stays in
+  memory. Lace determinism comes from CIP-8/Ed25519 and still needs a real wallet
+  for end-to-end verification.
+- **M053:** `leafIndex` was removed from `MockProofData`; the client still keeps
+  it locally to build the path, but never sends it. `watchRoots` is wired into
+  the feed and refreshes the local credential when the root changes.
+- **M054/M055:** the feed and detail pages download the sealed payload blob by
+  its `payloadHash`, open it with the community key, and render the description.
+  Finished complaints decrypt the outcome blob. `ugc-only` envelopes show the
+  UGC-restricted message. Plaintext read by the feed/detail page feeds the M059
+  cache. `MockLedger.fileComplaint` publishes `complaint.created`.
+- **M057:** the form imports `FILING_LIMIT_PER_MONTH` and derives remaining slots
+  from local receipts for the current month (`countFilingsInMonth`), disabling
+  submit at zero. It no longer hardcodes 3.
+- **M059:** feed and detail decryption call `rememberComplaintText`, so text
+  read in one view is available to the duplicate checker. The form still never
+  blocks filing on a suggestion.
+- **M060:** the university and UGC portals now render a shared, read-only
+  complaint overview (`lib/complaintOverview.ts`) instead of placeholders, so a
+  newly filed complaint is visible on all three portals with its support count.
+  The end-to-end pipeline test now uses two images and one video.
+- **Privacy logging:** the `onResponse` hook logs only the pathname (query
+  strings removed), status and duration; startup logs only the chain mode. The
+  privacy test asserts both.
+- **Constants:** `CATEGORIES`, `URGENCIES`, `STATUSES`,
+  `NORMAL_DEADLINE_SECONDS` and `URGENT_DEADLINE_SECONDS` are now
+  environment-overridable, with the locked values as defaults. `.env.example`
+  documents them. Enum overrides are restricted to the known values so zod
+  schemas stay valid.
+- **M001:** `.aiken/` was added to `.gitignore`; a repository test asserts every
+  required ignore pattern.
+- **CC-1:** the Tailwind CDN script was removed from `apps/web/crypto.html`; the
+  playground imports the self-hosted stylesheet.
+
+## Human Test 5 loop fixes (2026-11-25)
+
+- `apps/web/vite.config.ts` reads `VITE_API_TARGET` so an isolated harness can
+  run its own API port and two web origins without changing the default proxy.
+  The default remains `http://127.0.0.1:3000`.
+- The fake wallet remembers its passphrase in `sessionStorage`
+  (`usafe-dev-fake-wallet-passphrase`, development only). `unlockStudent` calls
+  `connectWallet()` without options after a refresh, so without this it silently
+  fell back to the default passphrase and derived a different commitment.
+  `clearFakeWalletSession()` removes it when the wizard starts over.
+- `SubmissionPipeline` binds its `fetch` implementation. Calling an unbound
+  `window.fetch` as `this.fetchImpl(...)` throws `Illegal invocation` in
+  browsers; Node's fetch is forgiving, which is why the unit tests missed it.
+- `renderFeed` and `renderDetail` rebuild an empty in-memory credential via
+  `refreshCredential()` instead of showing a "not ready" message after a fresh
+  enrolment or a module reload.
+- The full 10-round run and exact commands are recorded in
+  `docs/HUMAN_TEST_5_REPORT.md`.
+
+## Community-key delivery fix (2026-11-26)
+
+- The submission pipeline failed at "Seal the complaint payload" with HTTP 503
+  when the dev server was started without `COMMUNITY_DELIVERY_SECRET` in that
+  terminal. The repository never loaded `.env`, even though `.env.example`
+  documented the variable.
+- `dotenv` ^18.0.10 is now a runtime dependency. `server/src/env.ts` loads a
+  git-ignored `.env` from both `INIT_CWD` (npm workspace invocation root) and
+  the current directory. It is imported by `server/src/config.ts` and by every
+  root/server script that reads `process.env` directly. Explicit inline
+  environment variables still win because dotenv does not overwrite them.
+- A local `.env` was created from the dev defaults with
+  `COMMUNITY_DELIVERY_SECRET=change-me-dev-delivery-secret`, matching the
+  existing seeded key backups. It is git-ignored.
+- `.env.example` now uses `EMAIL_HASH_SALT=dev-email-hash-salt` (the same value
+  as the server default) and explains that `DATABASE_PATH` should be left unset
+  for the seeded dev database. The previous example values silently created a
+  second database for root-level scripts and mismatched existing roster hashes.
+- `getCommunityKey()` now includes the server's JSON `error` message in the
+  progress-step failure instead of the misleading generic "ask your university
+  to create one" text.

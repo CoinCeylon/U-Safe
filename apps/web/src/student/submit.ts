@@ -32,11 +32,10 @@ import {
   SubmitQueue,
   commitment,
   encryptFile,
-  filingNullifier,
   generateCommunityKey,
   importPublicKeyJwk,
+  mockNullifier,
   serializeEncryptedChunks,
-  supportNullifier,
   wrapAesKeyBytes,
   type MockProofData,
 } from '@usafe/crypto';
@@ -173,12 +172,14 @@ export async function buildFileProof(
   credential: CachedCredential,
 ): Promise<MembershipProof> {
   const commitmentBytes = await commitment(secret);
-  const nullifier = await filingNullifier(secret, yearMonth, slot);
+  const context = `file|${yearMonth}|${slot}`;
+  // Nullifier bound to the public commitment + context (M038); the server can
+  // recompute it and the student secret never leaves the browser.
+  const nullifier = await mockNullifier(commitmentBytes, context);
   const data: MockProofData = {
     commitment: bytesToHex(commitmentBytes),
     path: credential.proof,
-    leafIndex: credential.leafIndex,
-    context: `file|${yearMonth}|${slot}`,
+    context,
   };
   return {
     universityId,
@@ -200,14 +201,14 @@ export async function buildDeliveryProof(
   credential: CachedCredential,
 ): Promise<MembershipProof> {
   const commitmentBytes = await commitment(secret);
+  const context = 'support|community-key-delivery';
   // Bound to a fixed pseudo id so the nullifier is stable but never collides
   // with a real complaint id's support nullifier.
-  const nullifier = await supportNullifier(secret, 'community-key-delivery');
+  const nullifier = await mockNullifier(commitmentBytes, context);
   const data: MockProofData = {
     commitment: bytesToHex(commitmentBytes),
     path: credential.proof,
-    leafIndex: credential.leafIndex,
-    context: 'support|community-key-delivery',
+    context,
   };
   return {
     universityId,
@@ -225,7 +226,7 @@ export function clearCachedCommunityKey(): void {
   cachedCommunityKey = null;
 }
 
-async function getCommunityKey(
+export async function getCommunityKey(
   fetchImpl: typeof fetch,
   secret: Uint8Array,
   universityId: string,
@@ -244,9 +245,14 @@ async function getCommunityKey(
     },
   );
   if (!response.ok) {
-    throw new Error(
-      `Could not get the community key (HTTP ${response.status}). Ask your university to create one.`,
-    );
+    const body = (await response
+      .json()
+      .catch(() => null)) as { error?: unknown } | null;
+    const detail =
+      body !== null && typeof body.error === 'string'
+        ? body.error
+        : `HTTP ${response.status}`;
+    throw new Error(`Could not get the community key: ${detail}`);
   }
   const payload = (await response.json()) as { communityKey?: unknown };
   if (typeof payload.communityKey !== 'string') {
@@ -351,7 +357,10 @@ export class SubmissionPipeline {
     private readonly getCredential: () => Promise<CachedCredential>,
     options: PipelineOptions = {},
   ) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Bind the fetch function. A native `window.fetch` called as
+    // `this.fetchImpl(...)` has the pipeline object as `this` and throws
+    // "Illegal invocation" in browsers (Node's fetch is more forgiving).
+    this.fetchImpl = (options.fetchImpl ?? fetch).bind(globalThis);
     this.queueDelayMinMs = options.queueDelayMinMs ?? SUBMIT_DELAY_MIN_MS;
     this.queueDelayMaxMs = options.queueDelayMaxMs ?? SUBMIT_DELAY_MAX_MS;
     this.now = options.now ?? (() => new Date());

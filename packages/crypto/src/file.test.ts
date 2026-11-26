@@ -163,6 +163,43 @@ describe('encryptFile / decryptFile', () => {
     expect(totalBytes).toBe(file.size);
   });
 
+  it('round-trips a full 10 MB file', async () => {
+    const size = 10 * 1024 * 1024;
+    const contents = fillRandom(size);
+
+    // A view-backed file avoids FakeFile's per-slice copy of the whole buffer,
+    // which would allocate ~100 MB for a 10 MB file.
+    const file = {
+      size,
+      slice(start: number, end: number) {
+        const view = contents.subarray(start, end);
+        return {
+          arrayBuffer: () =>
+            Promise.resolve(
+              view.buffer.slice(
+                view.byteOffset,
+                view.byteOffset + view.byteLength,
+              ) as ArrayBuffer,
+            ),
+        };
+      },
+    };
+
+    const { chunks, key, totalBytes } = await encryptFile(file);
+    expect(totalBytes).toBe(size);
+    expect(chunks).toHaveLength(10);
+
+    const decrypted = await decryptFile(chunks, key, totalBytes);
+    expect(decrypted.length).toBe(size);
+
+    // Compare digests rather than materialising a huge diff.
+    const digest = async (bytes: Uint8Array): Promise<Uint8Array> =>
+      new Uint8Array(
+        await crypto.subtle.digest('SHA-256', bytes as unknown as BufferSource),
+      );
+    expect(await digest(decrypted)).toEqual(await digest(contents));
+  }, 30_000);
+
   it('round-trips a multi-chunk file across chunk boundaries', async () => {
     // Just over one chunk (2 chunks total) to exercise chunking.
     const size = FILE_CHUNK_BYTES + 1024;

@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ComplaintRecord } from '@usafe/shared';
+import '../server/src/env.js';
 import { openDatabase } from '../server/src/db/index.js';
 import {
   createUniversity,

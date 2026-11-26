@@ -1,8 +1,12 @@
-import type { CATEGORIES, STATUSES, URGENCIES } from './constants';
+import type {
+  DEFAULT_CATEGORIES,
+  DEFAULT_STATUSES,
+  DEFAULT_URGENCIES,
+} from './constants';
 
-export type Category = (typeof CATEGORIES)[number];
-export type Urgency = (typeof URGENCIES)[number];
-export type Status = (typeof STATUSES)[number];
+export type Category = (typeof DEFAULT_CATEGORIES)[number];
+export type Urgency = (typeof DEFAULT_URGENCIES)[number];
+export type Status = (typeof DEFAULT_STATUSES)[number];
 
 export type OwnerRole = 'university' | 'ugc';
 export type ComplaintViewerRole = 'student' | 'university' | 'ugc';

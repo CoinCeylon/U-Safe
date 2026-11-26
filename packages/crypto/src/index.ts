@@ -17,6 +17,7 @@ export {
 } from './nullifier';
 export {
   DOMAIN_TAG_MERKLE_INNER,
+  DOMAIN_TAG_MERKLE_ZERO,
   MERKLE_TREE_DEPTH,
   computeZeroNodes,
   MerkleTree,
@@ -56,6 +57,7 @@ export {
 export {
   generateCommunityKey,
   type SealedPayload,
+  sealedPayloadBytes,
   sealPayload,
   openPayload,
 } from './payload';
@@ -82,8 +84,10 @@ export {
   bucketCount,
 } from './anonymity';
 export {
+  DOMAIN_TAG_MOCK_NULLIFIER,
   type MockProofContext,
   type MockProofData,
+  mockNullifier,
   proveMembershipMock,
   verifyMembershipMock,
 } from './proof';
