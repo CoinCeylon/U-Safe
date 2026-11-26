@@ -1,4 +1,9 @@
-import { MERKLE_TREE_DEPTH, MerkleTree, Sha256Adapter } from '@usafe/crypto';
+import {
+  MERKLE_TREE_DEPTH,
+  MerkleTree,
+  SecureStore,
+  Sha256Adapter,
+} from '@usafe/crypto';
 import Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +25,9 @@ const secondCommitment = 'b'.repeat(64);
 const migrationsDir = fileURLToPath(
   new URL('../../migrations', import.meta.url),
 );
+const deliverySecret = 'test-delivery-secret';
+const communityKey = Buffer.alloc(32, 7);
+const communityKeyBase64 = communityKey.toString('base64');
 
 const config: Config = {
   NODE_ENV: 'test',
@@ -35,6 +43,7 @@ const config: Config = {
   SMTP_USER: '',
   SMTP_PASS: '',
   MAIL_FROM: 'noreply@usafe.local',
+  COMMUNITY_DELIVERY_SECRET: deliverySecret,
 };
 
 const mailer: Mailer = { send: () => Promise.resolve() };
@@ -44,14 +53,20 @@ let tickets: TicketService;
 let enrollment: EnrollmentService;
 let ledger: StubLedger;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, migrationsDir);
+  const delivery = await SecureStore.exportBackup(
+    { communityKey: communityKeyBase64 },
+    deliverySecret,
+  );
   db.prepare(
     `INSERT INTO universities
-       (id, name, domain, enrollment_ceiling, community_key_wrapped_for_ugc, status)
-       VALUES ('u1', 'Uni', 'uni.edu', 2, 'wrapped-key', 'active')`,
-  ).run();
+       (id, name, domain, enrollment_ceiling,
+        community_key_wrapped_for_ugc, community_key_wrapped_for_delivery,
+        status)
+       VALUES ('u1', 'Uni', 'uni.edu', 2, 'wrapped-key', ?, 'active')`,
+  ).run(delivery);
   db.prepare(
     'INSERT INTO roster (university_id, email_hash) VALUES (?, ?)',
   ).run('u1', emailHash(salt, email));
@@ -60,7 +75,7 @@ beforeEach(() => {
   ).run('u1', emailHash(salt, secondEmail));
   tickets = new TicketService(db, salt);
   ledger = new StubLedger();
-  enrollment = new EnrollmentService(db, tickets, ledger);
+  enrollment = new EnrollmentService(db, tickets, ledger, deliverySecret);
 });
 
 afterEach(() => {
@@ -71,12 +86,12 @@ const ticketFor = (address: string): string =>
   tickets.issue(address)?.ticket ?? '';
 
 describe('EnrollmentService.enroll', () => {
-  it('returns a valid Merkle receipt and the wrapped community key', async () => {
+  it('returns a valid Merkle receipt and the delivered community key', async () => {
     const result = await enrollment.enroll(ticketFor(email), commitment);
     expect(result.leafIndex).toBe(0);
     expect(result.path).toHaveLength(MERKLE_TREE_DEPTH);
     expect(result.root).toMatch(/^[a-f0-9]{64}$/);
-    expect(result.communityKeyWrapped).toBe('wrapped-key');
+    expect(result.communityKey).toBe(communityKeyBase64);
 
     const adapter = new Sha256Adapter();
     const proof = result.path.map(
@@ -169,7 +184,7 @@ describe('POST /api/enroll', () => {
     return app;
   };
 
-  it('returns leaf index, path, root and wrapped key only', async () => {
+  it('returns leaf index, path, root and the delivered key only', async () => {
     const ticket = ticketFor(email);
     const response = await (
       await getApp()
@@ -183,13 +198,13 @@ describe('POST /api/enroll', () => {
       leafIndex: number;
       path: string[];
       root: string;
-      communityKeyWrapped: string;
+      communityKey: string;
     }>();
     expect(body.leafIndex).toBe(0);
     expect(body.path).toHaveLength(MERKLE_TREE_DEPTH);
-    expect(body.communityKeyWrapped).toBe('wrapped-key');
+    expect(body.communityKey).toBe(communityKeyBase64);
     expect(Object.keys(body).sort()).toEqual([
-      'communityKeyWrapped',
+      'communityKey',
       'leafIndex',
       'path',
       'root',

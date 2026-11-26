@@ -2,9 +2,11 @@ import type Database from 'better-sqlite3';
 import type { EnrollmentLedger, EnrollmentReceipt } from './ledger.js';
 import type { TicketService } from './tickets.js';
 import { getUniversity } from './universities.js';
+import { unwrapForDelivery } from './communityKeys.js';
 
 export interface EnrollResult extends EnrollmentReceipt {
-  communityKeyWrapped: string | null;
+  /** Raw 32-byte AES community key, base64, for the newly enrolled student. */
+  communityKey: string | null;
 }
 
 export class EnrollmentError extends Error {
@@ -27,6 +29,7 @@ export class EnrollmentService {
     private readonly db: Database.Database,
     private readonly tickets: TicketService,
     private readonly ledger: EnrollmentLedger,
+    private readonly communityDeliverySecret?: string,
   ) {}
 
   async enroll(ticket: string, commitment: string): Promise<EnrollResult> {
@@ -59,10 +62,10 @@ export class EnrollmentService {
 
       return {
         details,
-        communityKeyWrapped: university.community_key_wrapped_for_ugc,
+        wrappedForDelivery: university.community_key_wrapped_for_delivery,
       };
     });
-    const { details, communityKeyWrapped } = prepared();
+    const { details, wrappedForDelivery } = prepared();
 
     let receipt: EnrollmentReceipt;
     try {
@@ -83,9 +86,14 @@ export class EnrollmentService {
       .prepare('UPDATE roster SET enrolled_at = ? WHERE id = ?')
       .run(new Date().toISOString(), details.rosterId);
 
+    const communityKey = await unwrapForDelivery(
+      wrappedForDelivery,
+      this.communityDeliverySecret,
+    );
+
     return {
       ...receipt,
-      communityKeyWrapped,
+      communityKey,
     };
   }
 }

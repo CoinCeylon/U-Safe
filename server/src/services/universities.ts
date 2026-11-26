@@ -8,6 +8,8 @@ export interface University {
   public_key_jwk: string | null;
   community_key_wrapped_for_ugc: string | null;
   community_key_wrapped_for_delivery: string | null;
+  community_key_created_at: string | null;
+  community_key_academic_year: string | null;
   status: string;
 }
 
@@ -19,6 +21,8 @@ export interface CreateUniversityInput {
   public_key_jwk?: string | null;
   community_key_wrapped_for_ugc?: string | null;
   community_key_wrapped_for_delivery?: string | null;
+  community_key_created_at?: string | null;
+  community_key_academic_year?: string | null;
   status?: string;
 }
 
@@ -40,6 +44,14 @@ const rowToUniversity = (row: Record<string, unknown>): University => ({
     row.community_key_wrapped_for_delivery == null
       ? null
       : asString(row.community_key_wrapped_for_delivery),
+  community_key_created_at:
+    row.community_key_created_at == null
+      ? null
+      : asString(row.community_key_created_at),
+  community_key_academic_year:
+    row.community_key_academic_year == null
+      ? null
+      : asString(row.community_key_academic_year),
   status: asString(row.status),
 });
 
@@ -55,14 +67,17 @@ export const createUniversity = (
     public_key_jwk: input.public_key_jwk ?? null,
     community_key_wrapped_for_ugc: input.community_key_wrapped_for_ugc ?? null,
     community_key_wrapped_for_delivery: input.community_key_wrapped_for_delivery ?? null,
+    community_key_created_at: input.community_key_created_at ?? null,
+    community_key_academic_year: input.community_key_academic_year ?? null,
     status: input.status ?? 'active',
   };
 
   db.prepare(
     `INSERT INTO universities
       (id, name, domain, enrollment_ceiling, public_key_jwk,
-       community_key_wrapped_for_ugc, community_key_wrapped_for_delivery, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       community_key_wrapped_for_ugc, community_key_wrapped_for_delivery,
+       community_key_created_at, community_key_academic_year, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
   ).run(
     university.id,
@@ -72,6 +87,8 @@ export const createUniversity = (
     university.public_key_jwk,
     university.community_key_wrapped_for_ugc,
     university.community_key_wrapped_for_delivery,
+    university.community_key_created_at,
+    university.community_key_academic_year,
     university.status,
   );
 
