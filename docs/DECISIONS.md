@@ -438,3 +438,8 @@ fixing agent did not commit anything; all changes are left for human review.
   detection uses `id === 'lace'`. Mesh's `BrowserWallet.signData` signature is
   `signData(payload, address?)`; the shared university module now calls it in
   that order so the CIP-8 challenge, not the address, is the signed payload.
+- M049: the onboarding privacy notice now matches specification section 7.3 and
+  the M062 help page: the university and UGC can read complaint text and
+  evidence, other students can read text only, staff-involved details are
+  UGC-only, and no complaint/support/wallet action is linked to the student's
+  identity. The copy is exported and covered by a unit test.

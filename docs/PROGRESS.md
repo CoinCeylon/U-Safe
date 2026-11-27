@@ -102,3 +102,4 @@ M038 | fixed | membership verification now accepts the current root even when it
 M039 | fixed | the mock ledger rejects filing proofs whose year-month is not the current UTC month, and the client uses UTC for filing periods so the two-slot monthly limit cannot be bypassed with arbitrary months
 M050 | fixed | student Lace detection matches the CIP-30 wallet id (`lace`), not the display name (`Lace`), and the lookup is unit tested
 M063 | fixed | the shared university wallet passes Mesh `signData(payload, address)` in the correct order, with a mocked regression test for CIP-8 login
+M049 | fixed | onboarding step 1 now states that the university can read complaint text and evidence, that students can read text only, that the UGC can read both, and that staff-involved details are UGC-only
