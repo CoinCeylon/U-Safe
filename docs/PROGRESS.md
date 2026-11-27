@@ -62,6 +62,37 @@ M056 | done | Anonymous support flow: unlock on demand, locally built mock proof
 M057 | done | File complaint form with 40–4000 character validation, category, urgency, staff-involved toggle, optional accused details, privacy guidance and filing slots
 
 M058 | done | Evidence attachment picker with up to 5 files, 25 MB each, previews, metadata stripping for images, metadata acknowledgement, and clear rejection messages
+M059 | done | Duplicate suggestions: browser-side token-overlap comparison of the typed description with open same-university complaints (threshold 0.5, top 3) surfacing a "Support this one instead" link, with complaint text cached locally in complaint-text.ts until M060/M065 make sealed payload text readable
+M060 | done | Submission pipeline with a visible eight-step progress list: encrypted evidence blobs, per-file keys wrapped for the university/UGC, payload sealed with the community key (or a per-complaint UGC-only key when staff are involved), filing-nullifier slot fallback, queued anonymous submission, retry without duplicate uploads, and encrypted local receipts, backed by new community-key delivery and UGC public-key routes
+M061 | done | Receipts now carry each per-file key (the student's copy) and the last observed status; the My complaints page lists filed complaints from local receipts only, refreshes statuses live via SSE plus the public complaint endpoint, re-downloads evidence with hash verification, and documents that clearing site data removes the list permanently
+M062 | done | Student polish: configurable HELPLINES constant, offline-aware friendly errors with retry (feed reload with SSE reconnect, support, submissions, downloads, wizard), a static Help page with anonymity explanation and emergency guidance, a skip-to-content link, global keyboard focus outlines, online/offline toasts, and friendlier empty/error states
+
+## Audit corrections (2026-11-25)
+
+M001 | fixed | `.aiken/` added to `.gitignore` and a repository test asserts all required ignore patterns
+M006 | fixed | showcase test asserts every primitive is exported and rendered and that the page declares a phone viewport; see `docs/DESIGN_SYSTEM_REPORT.md`
+M014 | fixed | dedicated zero-node domain tag, `root()` alias, depth-checked `verify` with a two-leaf and empty-path test
+M015 | fixed | a real 10 MB encrypt/decrypt round-trip test
+M017 | fixed | `sealPayload` hashes the exact sealed bytes and the test recomputes it from stored bytes
+M018 | fixed | canvas-less JPEG fallback plus a GPS-EXIF `stripImage` test verified by the byte-level reader
+M019 | fixed | playground hashes encrypted bytes and fixed-vector/encrypted-byte tests were added
+M020 | partial | reload is tested over a shared backend; real IndexedDB persistence remains a browser human test
+M022 | fixed | editable ciphertext box feeds decryption; report in `docs/HUMAN_TEST_2_REPORT.md`
+M025 | fixed | roster route is staff-only and 100-row/per-line-error tests were added
+M029 | fixed | prepare/commit keeps ticket burn, ceiling, roster and ledger writes in one transaction with a rollback test
+M032 | fixed | POST challenge, single-use nonce, Mesh `checkSignature`, replay/expiry/rejection tests
+M038 | fixed | commitment+context-bound nullifiers, fixed-depth path, server-side leaf lookup, forged empty-path test
+M039 | fixed | sequential ids from a database sequence inside the insert transaction
+M040 | fixed | university binding through the verified leaf list and context/complaint id match
+M048 | fixed | mock banner lives in the shared frame and is driven by `/api/health`; landing banner bug removed
+M050 | partial | fake-wallet passphrase field added; Lace determinism still needs a real-wallet human test
+M053 | fixed | leaf index removed from proofs; `watchRoots` wired into the feed
+M054 | fixed | feed decrypts sealed descriptions and `complaint.created` is published
+M055 | fixed | detail decrypts descriptions and outcomes; all four state summaries are tested
+M057 | fixed | slots come from `FILING_LIMIT_PER_MONTH` and local receipts, never a hardcoded 3
+M059 | fixed | feed/detail decryption feeds the local duplicate corpus
+M060 | partial | all three portals show a shared complaint overview and the pipeline test uses two images plus one video; full role portals remain M063+/M073+
+M062 | partial | keyboard/accessibility evidence recorded in `docs/ACCESSIBILITY_REPORT.md`; no automated axe run
 M063 | done | University staff login with CIP-8 wallet sign-in and dev dropdown, sessionStorage token, seeded registrar/investigator/admin accounts, role-guarded routes, logout and access-denied views
 M064 | done | Role key setup: import a .dev-keys backup or generate an RSA-OAEP pair, passphrase-protected storage in IndexedDB, mandatory backup download, PUT /api/university/:id/public-key registration, complaint pages blocked until the key is unlocked
 M065 | done | Admin-only Community key screen creates an AES-256 key in the browser, wraps it for the UGC public key, stores a passphrase-protected local backup, posts both copies to the server (delivery copy wrapped under COMMUNITY_DELIVERY_SECRET), and enrollment now delivers the raw community key to newly enrolled students

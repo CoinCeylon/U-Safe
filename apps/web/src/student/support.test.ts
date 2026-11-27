@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   commitment,
-  supportNullifier,
+  mockNullifier,
   verifyMembershipMock,
 } from '@usafe/crypto';
 import { computeCredential, bytesToHex } from './credential';
@@ -31,23 +31,25 @@ describe('student support flow (M056)', () => {
     expect(proof.universityId).toBe('uni-1');
     expect(proof.root).toBe(credential.root);
     expect(proof.nullifier).toBe(
-      bytesToHex(await supportNullifier(secret, 'complaint-7')),
+      bytesToHex(await mockNullifier(ownCommitment, 'support|complaint-7')),
     );
 
     const data = JSON.parse(proof.data) as {
       commitment: string;
       path: string[];
-      leafIndex: number;
+      leafIndex?: number;
       context: string;
     };
     expect(data.commitment).toBe(bytesToHex(ownCommitment));
-    expect(data.leafIndex).toBe(credential.leafIndex);
+    // The leaf index is never included in the proof (M053).
+    expect(data.leafIndex).toBeUndefined();
     expect(data.path).toEqual(credential.proof);
     expect(data.context).toBe('support|complaint-7');
 
     const valid = await verifyMembershipMock(proof, {
       roots: [credential.root],
       usedNullifiers: new Set<string>(),
+      leafIndex: credential.leafIndex,
     });
     expect(valid).toBe(true);
   });

@@ -13,6 +13,7 @@ const makeConfig = (overrides: Partial<Config> = {}): Config => ({
   WEB_ORIGIN: 'http://localhost:5173',
   DATABASE_PATH: './data/usafe.db',
   EMAIL_HASH_SALT: 'test-salt',
+  COMMUNITY_DELIVERY_SECRET: 'delivery-secret',
   MAIL_MODE: 'dev',
   SMTP_HOST: '',
   SMTP_PORT: 587,

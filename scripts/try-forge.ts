@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MembershipProof } from '@usafe/shared';
+import '../server/src/env.js';
 
 export interface TryForgeResult {
   statusCode: number;
@@ -11,24 +12,11 @@ export interface TryForgeResult {
 const apiUrl = (baseUrl: string, path: string): string =>
   new URL(path, baseUrl).toString();
 
-export const tryForgedProof = async (
+const postForgedProof = async (
   baseUrl: string,
   universityId: string,
+  proof: MembershipProof,
 ): Promise<TryForgeResult> => {
-  const yearMonth = new Date().toISOString().slice(0, 7);
-  const proof: MembershipProof = {
-    universityId,
-    root: '0'.repeat(64),
-    nullifier: randomBytes(32).toString('hex'),
-    kind: 'mock',
-    data: JSON.stringify({
-      commitment: 'f'.repeat(64),
-      path: [],
-      leafIndex: 0,
-      context: `file|${yearMonth}|0`,
-    }),
-  };
-
   const response = await fetch(apiUrl(baseUrl, '/api/complaints'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -56,6 +44,55 @@ export const tryForgedProof = async (
   }
 
   return { statusCode: response.status, error: String(body.error) };
+};
+
+export const tryForgedProof = async (
+  baseUrl: string,
+  universityId: string,
+): Promise<TryForgeResult> => {
+  const yearMonth = new Date().toISOString().slice(0, 7);
+
+  // Case 1: an entirely made-up root and commitment.
+  const fakeRootProof: MembershipProof = {
+    universityId,
+    root: '0'.repeat(64),
+    nullifier: randomBytes(32).toString('hex'),
+    kind: 'mock',
+    data: JSON.stringify({
+      commitment: 'f'.repeat(64),
+      path: [],
+      context: `file|${yearMonth}|0`,
+    }),
+  };
+  const result = await postForgedProof(baseUrl, universityId, fakeRootProof);
+
+  // Case 2: a *real* root from the public endpoint, but an empty Merkle path
+  // that claims the commitment equals the root. Before M038 this passed; it
+  // must now be rejected by the fixed-depth path check.
+  const rootsResponse = await fetch(
+    apiUrl(baseUrl, `/api/universities/${encodeURIComponent(universityId)}/roots`),
+  );
+  if (rootsResponse.ok) {
+    const rootsBody = (await rootsResponse.json().catch(() => ({}))) as {
+      currentRoot?: unknown;
+    };
+    if (typeof rootsBody.currentRoot === 'string') {
+      const emptyPathProof: MembershipProof = {
+        universityId,
+        root: rootsBody.currentRoot,
+        nullifier: randomBytes(32).toString('hex'),
+        kind: 'mock',
+        data: JSON.stringify({
+          commitment: rootsBody.currentRoot,
+          path: [],
+          context: `file|${yearMonth}|0`,
+        }),
+      };
+      await postForgedProof(baseUrl, universityId, emptyPathProof);
+    }
+  }
+
+  return result;
 };
 
 const main = async (): Promise<void> => {

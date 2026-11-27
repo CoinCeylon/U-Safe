@@ -164,6 +164,40 @@ export class FakeWallet implements StudentWallet {
 
 let active: StudentWallet | null = null;
 
+// The fake wallet's passphrase is development-only and must survive a reload:
+// `unlockStudent` calls `connectWallet()` without a passphrase after a refresh,
+// so the typed passphrase is remembered in this tab's sessionStorage. A real
+// Lace wallet persists its own account, so this is never used outside fake mode.
+const FAKE_PASSPHRASE_KEY = 'usafe-dev-fake-wallet-passphrase';
+
+function rememberFakePassphrase(passphrase: string): void {
+  try {
+    sessionStorage.setItem(FAKE_PASSPHRASE_KEY, passphrase);
+  } catch {
+    // Storage is optional; the current session still works in memory.
+  }
+}
+
+function readRememberedFakePassphrase(): string | null {
+  try {
+    return sessionStorage.getItem(FAKE_PASSPHRASE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Clears the fake wallet and its remembered passphrase (development only). */
+export function clearFakeWalletSession(): void {
+  if (active?.getType() === 'fake') {
+    active = null;
+  }
+  try {
+    sessionStorage.removeItem(FAKE_PASSPHRASE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export function isFakeWalletMode(): boolean {
   if (typeof window === 'undefined') {
     return false;
@@ -201,7 +235,11 @@ export async function connectWallet(options?: {
   passphrase?: string;
 }): Promise<void> {
   if (isFakeWalletMode()) {
-    const passphrase = options?.passphrase ?? DEV_FAKE_PASSPHRASE;
+    const passphrase =
+      options?.passphrase ??
+      readRememberedFakePassphrase() ??
+      DEV_FAKE_PASSPHRASE;
+    rememberFakePassphrase(passphrase);
     active = new FakeWallet(passphrase);
   } else {
     active = new LaceWallet();

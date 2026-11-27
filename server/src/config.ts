@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import './env.js';
 
 const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
@@ -8,6 +9,7 @@ const envSchema = z.object({
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   DATABASE_PATH: z.string().default('./data/usafe.db'),
   EMAIL_HASH_SALT: z.string().default('dev-email-hash-salt'),
+  COMMUNITY_DELIVERY_SECRET: z.string().default(''),
   MAIL_MODE: z.enum(['dev', 'smtp']).default('dev'),
   SMTP_HOST: z.string().default(''),
   SMTP_PORT: z.coerce.number().int().positive().default(587),

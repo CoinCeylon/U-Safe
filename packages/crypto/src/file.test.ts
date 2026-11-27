@@ -6,6 +6,8 @@ import {
   encryptFile,
   decryptFile,
   FILE_CHUNK_BYTES,
+  serializeEncryptedChunks,
+  parseEncryptedChunks,
 } from './file';
 
 const enc = new TextEncoder();
@@ -160,6 +162,43 @@ describe('encryptFile / decryptFile', () => {
     expect(decrypted).toEqual(contents);
     expect(totalBytes).toBe(file.size);
   });
+
+  it('round-trips a full 10 MB file', async () => {
+    const size = 10 * 1024 * 1024;
+    const contents = fillRandom(size);
+
+    // A view-backed file avoids FakeFile's per-slice copy of the whole buffer,
+    // which would allocate ~100 MB for a 10 MB file.
+    const file = {
+      size,
+      slice(start: number, end: number) {
+        const view = contents.subarray(start, end);
+        return {
+          arrayBuffer: () =>
+            Promise.resolve(
+              view.buffer.slice(
+                view.byteOffset,
+                view.byteOffset + view.byteLength,
+              ) as ArrayBuffer,
+            ),
+        };
+      },
+    };
+
+    const { chunks, key, totalBytes } = await encryptFile(file);
+    expect(totalBytes).toBe(size);
+    expect(chunks).toHaveLength(10);
+
+    const decrypted = await decryptFile(chunks, key, totalBytes);
+    expect(decrypted.length).toBe(size);
+
+    // Compare digests rather than materialising a huge diff.
+    const digest = async (bytes: Uint8Array): Promise<Uint8Array> =>
+      new Uint8Array(
+        await crypto.subtle.digest('SHA-256', bytes as unknown as BufferSource),
+      );
+    expect(await digest(decrypted)).toEqual(await digest(contents));
+  }, 30_000);
 
   it('round-trips a multi-chunk file across chunk boundaries', async () => {
     // Just over one chunk (2 chunks total) to exercise chunking.
@@ -327,5 +366,59 @@ describe('encryptFile / decryptFile', () => {
     expect(result.chunks.length).toBe(Math.ceil(size / FILE_CHUNK_BYTES));
     expect(result.totalBytes).toBe(size);
     expect(result.key).toHaveLength(32);
+  });
+});
+
+describe('serializeEncryptedChunks / parseEncryptedChunks', () => {
+  it('round-trips chunks through the framed blob format', async () => {
+    const contents = enc.encode('frame round trip');
+    const file = new FakeFile([contents], 'frame.bin');
+    const { chunks, key, totalBytes } = await encryptFile(file);
+
+    const framed = serializeEncryptedChunks(chunks);
+    const parsed = parseEncryptedChunks(framed);
+
+    expect(framed.subarray(0, 4)).toEqual(enc.encode('USF1'));
+    expect(parsed).toHaveLength(chunks.length);
+    const decrypted = await decryptFile(parsed, key, totalBytes);
+    expect(decrypted).toEqual(contents);
+  });
+
+  it('rejects an empty chunk list', () => {
+    expect(() => serializeEncryptedChunks([])).toThrow('empty');
+  });
+
+  it('rejects a frame without the magic bytes', () => {
+    const contents = enc.encode('magic');
+    const file = new FakeFile([contents], 'magic.bin');
+    void file; // framing is tested on a synthetic buffer below
+
+    const bogus = new Uint8Array(16);
+    expect(() => parseEncryptedChunks(bogus)).toThrow('unknown');
+  });
+
+  it('rejects a truncated frame body', async () => {
+    const contents = enc.encode('truncate');
+    const file = new FakeFile([contents], 'truncate.bin');
+    const { chunks } = await encryptFile(file);
+    const framed = serializeEncryptedChunks(chunks);
+
+    const truncated = framed.subarray(0, framed.length - 1);
+    expect(() => parseEncryptedChunks(truncated)).toThrow('truncated');
+  });
+
+  it('rejects a frame with trailing bytes', async () => {
+    const contents = enc.encode('trailing');
+    const file = new FakeFile([contents], 'trailing.bin');
+    const { chunks } = await encryptFile(file);
+    const framed = serializeEncryptedChunks(chunks);
+
+    const padded = new Uint8Array(framed.length + 1);
+    padded.set(framed);
+    expect(() => parseEncryptedChunks(padded)).toThrow('trailing');
+  });
+
+  it('rejects a frame shorter than its header', () => {
+    expect(() => parseEncryptedChunks(new Uint8Array(4))).toThrow('too short');
   });
 });

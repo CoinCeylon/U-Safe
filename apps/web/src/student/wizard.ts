@@ -15,11 +15,13 @@
 
 import { button } from '../ui/button';
 import { navigate } from '../lib/router';
+import { friendlyError, isOfflineError } from '../lib/offline';
 import { input } from '../ui/input';
 import { select } from '../ui/select';
 import { toast } from '../ui/toast';
 import {
   connectWallet,
+  clearFakeWalletSession,
   isConnected,
   getAddress,
   isFakeWalletMode,
@@ -323,8 +325,7 @@ function renderStep2(state: WizardState, onChange: WizardChange): HTMLElement {
       onChange({ ticket: ticket.ticket });
       toast('Enrolment ticket received.', 'success');
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Verification failed.';
+      const message = friendlyError(error, 'Verification failed.');
       onChange({ otpError: message }, false);
       otpError.textContent = message;
       otpError.hidden = false;
@@ -359,7 +360,7 @@ function renderStep2(state: WizardState, onChange: WizardChange): HTMLElement {
       verify.disabled = !isValidCode(state.code) || state.ticket !== null;
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Could not resend code.';
+        friendlyError(error, 'Could not resend code.');
       onChange({ otpError: message }, false);
       otpError.textContent = message;
       otpError.hidden = false;
@@ -397,6 +398,10 @@ function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
     'Connect your Lace wallet to sign the enrolment message. Your wallet address is never stored with your complaint.';
   section.append(intro);
 
+  // The fake wallet derives a deterministic signature from this passphrase.
+  // It is never persisted; the real Lace wallet ignores it.
+  let fakePassphrase = '';
+
   if (isFakeWalletMode()) {
     const warn = document.createElement('div');
     warn.className =
@@ -404,6 +409,26 @@ function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
     warn.textContent =
       'DEVELOPMENT ONLY: fake wallet active. Do not use for real enrolments.';
     section.append(warn);
+
+    const passphraseLabel = document.createElement('label');
+    passphraseLabel.htmlFor = 'fake-wallet-passphrase';
+    passphraseLabel.className = 'text-sm font-medium text-slate-700';
+    passphraseLabel.textContent = 'Fake wallet passphrase (development only)';
+    const passphraseInput = document.createElement('input');
+    passphraseInput.type = 'password';
+    passphraseInput.id = 'fake-wallet-passphrase';
+    passphraseInput.autocomplete = 'off';
+    passphraseInput.className =
+      'w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-light';
+    passphraseInput.placeholder = 'Type the same passphrase to get the same wallet';
+    passphraseInput.addEventListener('input', () => {
+      fakePassphrase = passphraseInput.value;
+    });
+    const hint = document.createElement('p');
+    hint.className = 'text-xs text-slate-500';
+    hint.textContent =
+      'The same passphrase always produces the same fake address and signature. It is kept in memory only.';
+    section.append(passphraseLabel, passphraseInput, hint);
   }
 
   const connected = state.walletConnected;
@@ -411,7 +436,13 @@ function renderStep3(state: WizardState, onChange: WizardChange): HTMLElement {
 
   const handleConnect = async (): Promise<void> => {
     try {
-      await connectWallet();
+      if (isFakeWalletMode() && fakePassphrase.trim() === '') {
+        toast('Type a fake wallet passphrase first.', 'danger');
+        return;
+      }
+      await connectWallet(
+        isFakeWalletMode() ? { passphrase: fakePassphrase } : undefined,
+      );
       onChange({
         walletConnected: isConnected(),
       });
@@ -517,6 +548,7 @@ function renderStep4(state: WizardState, onChange: WizardChange): HTMLElement {
     variant: 'secondary',
     onClick: () => {
       clearStudentSecret();
+      clearFakeWalletSession();
       clearPersisted();
       onChange({
         step: 1,
@@ -593,17 +625,17 @@ async function runEnrollment(
     onChange({ enrollStatus: 'done' });
     toast('Enrolment complete.', 'success');
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Enrolment failed.';
-    let friendly = message;
-    if (message === 'ceiling reached') {
-      friendly =
-        'This university has reached its enrolment ceiling. Please contact the registrar.';
-    } else if (message === 'invalid ticket') {
-      friendly =
-        'Your enrolment ticket is invalid or has expired. Request a new code.';
-    } else if (message.startsWith('HTTP 400')) {
-      friendly = 'Enrolment was rejected by the server. Please try again.';
+    let friendly = friendlyError(error, 'Enrolment failed.');
+    if (!isOfflineError(error)) {
+      if (friendly === 'ceiling reached') {
+        friendly =
+          'This university has reached its enrolment ceiling. Please contact the registrar.';
+      } else if (friendly === 'invalid ticket') {
+        friendly =
+          'Your enrolment ticket is invalid or has expired. Request a new code.';
+      } else if (friendly.startsWith('HTTP 400')) {
+        friendly = 'Enrolment was rejected by the server. Please try again.';
+      }
     }
     onChange({ enrollStatus: 'error', enrollError: friendly });
     toast(friendly, 'danger');
@@ -699,7 +731,7 @@ export function renderWizard(
         () => onChange({ otpRequested: true }, false),
         (error) => {
           const message =
-            error instanceof Error ? error.message : 'Could not send code.';
+            friendlyError(error, 'Could not send code.');
           onChange({ otpError: message }, false);
           const errorEl = stepOutlet.querySelector<HTMLElement>('#wizard-otp-error');
           if (errorEl) {

@@ -54,6 +54,8 @@ server/data/blobs/
 # SQLite databases (keep schema/migrations and seed scripts in Git)
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.sqlite-journal
@@ -62,6 +64,7 @@ server/data/blobs/
 
 # Cardano / Aiken generated build artifacts
 # Keep source files, aiken.toml, and project configuration tracked.
+.aiken/
 plutus.json
 .blueprint/
 

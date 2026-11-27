@@ -1,10 +1,13 @@
 import '../styles/app.css';
 import { createFrame } from '../ui/frame';
+import { toast } from '../ui/toast';
 import { createRouter } from '../lib/router';
 import { fetchUniversities, renderWizard } from './wizard';
 import { renderFileComplaintForm } from './file-complaint';
 import { renderFeed } from './feed';
 import { renderDetail } from './detail';
+import { renderMyComplaints } from './my-complaints';
+import { renderHelpPage } from './help';
 import { getStudentSecret } from './unlock';
 import { getRememberedUniversity } from './session';
 import { ensureUnlocked } from './session';
@@ -22,6 +25,8 @@ const portalFrame = createFrame({
     { label: 'Home', path: '/' },
     { label: 'Community feed', path: '/feed' },
     { label: 'File a complaint', path: '/file-complaint' },
+    { label: 'My complaints', path: '/my-complaints' },
+    { label: 'Help', path: '/help' },
   ],
 });
 
@@ -97,6 +102,30 @@ router.register('/file-complaint', () => {
   const section = document.createElement('section');
   renderFileComplaintForm(section);
   return section;
+});
+
+router.register('/my-complaints', () => {
+  const section = document.createElement('section');
+  void renderMyComplaints(section);
+  return section;
+});
+
+router.register('/help', () => {
+  const section = document.createElement('section');
+  renderHelpPage(section);
+  return section;
+});
+
+// Friendly connectivity notices: a student who lost the network should know
+// why actions fail instead of guessing. Nothing identifying is ever logged.
+window.addEventListener('offline', () => {
+  toast(
+    'You are offline. Some actions will not work until you reconnect.',
+    'danger',
+  );
+});
+window.addEventListener('online', () => {
+  toast('You are back online.', 'success');
 });
 
 router.start();

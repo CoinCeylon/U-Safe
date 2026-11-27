@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import { randomBytes } from 'node:crypto';
 import {
   bucketCount,
   computeZeroNodes,
@@ -120,9 +119,16 @@ export class MockLedger implements LedgerAdapter {
   // Enroll commitment (M037)
   // ------------------------------------------------------------------
 
-  async enrollCommitment(
-    input: EnrollCommitmentInput,
-  ): Promise<EnrollCommitmentResult> {
+  /**
+   * Computes everything an enrollment needs (leaf index, path, root) without
+   * writing anything. `commit()` then performs the leaf/root inserts inside
+   * the caller's SQLite transaction (M029), so ticket burn, ceiling check,
+   * roster update and ledger writes all commit or roll back together.
+   */
+  async prepareEnrollment(input: EnrollCommitmentInput): Promise<{
+    receipt: EnrollCommitmentResult;
+    commit: () => void;
+  }> {
     const university = this.getUniversity(input.universityId);
     if (university === null) {
       throw new Error(`unknown university: ${input.universityId}`);
@@ -151,8 +157,8 @@ export class MockLedger implements LedgerAdapter {
     const leafIndex = await tree.insert(commitmentBytes);
     const proof = tree.proof(leafIndex);
     const root = tree.getRoot();
-
     const now = new Date().toISOString();
+
     const insertLeaf = this.db.prepare(
       `INSERT INTO ml_leaves (university_id, leaf_index, commitment) VALUES (?, ?, ?)`,
     );
@@ -160,19 +166,36 @@ export class MockLedger implements LedgerAdapter {
       `INSERT INTO ml_roots (university_id, root, created_at) VALUES (?, ?, ?)`,
     );
 
-    const transaction = this.db.transaction(() => {
-      insertLeaf.run(input.universityId, leafIndex, input.commitment);
-      insertRoot.run(input.universityId, toHex(root), now);
-    });
-    transaction();
-
-    this.trees.delete(input.universityId);
-
     return {
-      leafIndex,
-      path: proof.map((sibling) => Buffer.from(sibling).toString('hex')),
-      root: toHex(root),
+      receipt: {
+        leafIndex,
+        path: proof.map((sibling) => Buffer.from(sibling).toString('hex')),
+        root: toHex(root),
+      },
+      commit: () => {
+        // Re-check under the caller's transaction: another request may have
+        // enrolled between prepareEnrollment and commit.
+        const current = this.getLeavesInternal(input.universityId);
+        if (current.includes(input.commitment)) {
+          throw new Error('duplicate commitment');
+        }
+        if (current.length !== leafIndex) {
+          throw new Error('enrollment state changed, please retry');
+        }
+        insertLeaf.run(input.universityId, leafIndex, input.commitment);
+        insertRoot.run(input.universityId, toHex(root), now);
+        this.trees.delete(input.universityId);
+      },
     };
+  }
+
+  async enrollCommitment(
+    input: EnrollCommitmentInput,
+  ): Promise<EnrollCommitmentResult> {
+    const prepared = await this.prepareEnrollment(input);
+    const transaction = this.db.transaction(() => prepared.commit());
+    transaction();
+    return prepared.receipt;
   }
 
   // ------------------------------------------------------------------
@@ -240,12 +263,25 @@ export class MockLedger implements LedgerAdapter {
   ): Promise<boolean> {
     const { roots } = await this.getRoots({ universityId: proof.universityId });
 
-    const usedRows = this.db
-      .prepare(`SELECT value FROM ml_nullifiers WHERE kind = 'membership'`)
-      .all() as Array<{ value: string }>;
-    const usedNullifiers = new Set(usedRows.map((row) => row.value));
+    // Cryptographic validity only. Nullifier reuse is action-specific: the
+    // request guard must let a duplicate through so fileComplaint /
+    // supportComplaint can return the specific "already used" error (the UI
+    // treats a duplicate support as a quiet success). Those methods check the
+    // relevant kind against ml_nullifiers themselves.
+    const usedNullifiers = new Set<string>();
 
-    return verifyMembershipMock(proof, { roots, usedNullifiers });
+    // Resolve the leaf index from the public leaf list. The client never sends
+    // it (M053); this also binds the commitment to the claimed university.
+    const leaves = this.getLeavesInternal(proof.universityId);
+    let leafIndex = -1;
+    try {
+      const data = JSON.parse(proof.data) as MockProofData;
+      leafIndex = leaves.indexOf(data.commitment);
+    } catch {
+      return false;
+    }
+
+    return verifyMembershipMock(proof, { roots, usedNullifiers, leafIndex });
   }
 
   // ------------------------------------------------------------------
@@ -255,14 +291,31 @@ export class MockLedger implements LedgerAdapter {
   async fileComplaint(
     input: FileComplaintInput,
   ): Promise<FileComplaintResult> {
-    // 1. Verify the membership proof (root in grace window, valid Merkle path,
-    //    nullifier not already used).
+    // 0. The proof must belong to the same university the complaint is filed
+    //    against; the commitment is looked up in that university's leaves.
+    if (input.proof.universityId !== input.universityId) {
+      throw new Error('proof university does not match complaint university');
+    }
+
+    // 1. Reject a reused filing nullifier first, so the client can tell a
+    //    used monthly slot (and try the other one) from a forged proof.
+    const existing = this.db
+      .prepare(
+        `SELECT value FROM ml_nullifiers WHERE kind = 'filing' AND value = ?`,
+      )
+      .get(input.proof.nullifier) as { value: string } | undefined;
+    if (existing !== undefined) {
+      throw new Error('filing nullifier already used');
+    }
+
+    // 2. Verify the membership proof (root in grace window, valid Merkle path,
+    //    nullifier bound to the commitment and context, not already used).
     const proofValid = await this.verifyMembershipMock(input.proof);
     if (!proofValid) {
       throw new Error('invalid membership proof');
     }
 
-    // 2. Parse the proof data to extract the filing context.
+    // 3. Parse the proof data to extract the filing context.
     const data = JSON.parse(input.proof.data) as MockProofData;
     const contextParts = data.context.split('|');
     if (contextParts[0] !== 'file' || contextParts.length !== 3) {
@@ -273,20 +326,9 @@ export class MockLedger implements LedgerAdapter {
       throw new Error('filing slot must be 0 or 1');
     }
 
-    // 3. Reject a reused filing nullifier. With only two slots (0 and 1) per
-    //    year-month, a third filing would have to reuse one of them, so
-    //    nullifier uniqueness enforces the per-student monthly filing limit.
-    const existing = this.db
-      .prepare(
-        `SELECT value FROM ml_nullifiers WHERE kind = 'filing' AND value = ?`,
-      )
-      .get(input.proof.nullifier) as { value: string } | undefined;
-    if (existing !== undefined) {
-      throw new Error('filing nullifier already used');
-    }
-
-    // 4. Assign a sequential id.
-    const id = `c-${Date.now()}-${randomBytes(8).toString('hex')}`;
+    // 4. With only two slots (0 and 1) per year-month, a third filing would
+    //    have to reuse one of them, so nullifier uniqueness enforces the
+    //    per-student monthly filing limit.
 
     // 5. Set deadlineAt from urgency (DEMO_SLA_SECONDS override for demos).
     const now = Date.now();
@@ -321,7 +363,22 @@ export class MockLedger implements LedgerAdapter {
       INSERT INTO ml_nullifiers (kind, value) VALUES ('filing', ?)
     `);
 
+    let id = '';
     const transaction = this.db.transaction(() => {
+      // Assign a sequential id from a dedicated sequence row inside the same
+      // transaction as the insert (M039).
+      const sequence = this.db
+        .prepare('SELECT next_value FROM ml_complaint_sequence WHERE id = 1')
+        .get() as { next_value: number } | undefined;
+      if (sequence === undefined) {
+        throw new Error('complaint id sequence is missing');
+      }
+      const nextValue = Number(sequence.next_value);
+      id = `c-${String(nextValue).padStart(6, '0')}`;
+      this.db
+        .prepare('UPDATE ml_complaint_sequence SET next_value = ? WHERE id = 1')
+        .run(nextValue + 1);
+
       insertComplaint.run(
         id,
         input.universityId,
@@ -340,6 +397,9 @@ export class MockLedger implements LedgerAdapter {
     });
     transaction();
 
+    // Live feeds listen for complaint.created (M054).
+    this.publishEvent({ type: 'complaint.created', id });
+
     return { id };
   }
 
@@ -350,14 +410,25 @@ export class MockLedger implements LedgerAdapter {
   async supportComplaint(
     input: SupportComplaintInput,
   ): Promise<SupportComplaintResult> {
-    // 1. Verify the membership proof (root in grace window, valid Merkle path,
-    //    nullifier not already used).
+    // 1. Reject a reused support nullifier first, with the specific message
+    //    the UI treats as a quiet duplicate.
+    const existing = this.db
+      .prepare(
+        `SELECT value FROM ml_nullifiers WHERE kind = 'support' AND value = ?`,
+      )
+      .get(input.proof.nullifier) as { value: string } | undefined;
+    if (existing !== undefined) {
+      throw new Error('support nullifier already used');
+    }
+
+    // 2. Verify the membership proof (root in grace window, valid Merkle path,
+    //    nullifier bound to commitment + context, not already used).
     const proofValid = await this.verifyMembershipMock(input.proof);
     if (!proofValid) {
       throw new Error('invalid membership proof');
     }
 
-    // 2. Parse the proof data to extract the support context.
+    // 3. Parse the proof data to extract the support context.
     const data = JSON.parse(input.proof.data) as MockProofData;
     const contextParts = data.context.split('|');
     if (contextParts[0] !== 'support' || contextParts.length !== 2) {
@@ -366,7 +437,7 @@ export class MockLedger implements LedgerAdapter {
       );
     }
     const complaintId = contextParts[1];
-    if (complaintId === undefined) {
+    if (complaintId === undefined || complaintId !== input.complaintId) {
       throw new Error(
         'proof context must be a support context: support|<complaintId>',
       );
@@ -383,16 +454,6 @@ export class MockLedger implements LedgerAdapter {
     // 4. Verify that the proof's university matches the complaint's university.
     if (input.proof.universityId !== complaint.university_id) {
       throw new Error('proof university does not match complaint university');
-    }
-
-    // 5. Reject a reused support nullifier.
-    const existing = this.db
-      .prepare(
-        `SELECT value FROM ml_nullifiers WHERE kind = 'support' AND value = ?`,
-      )
-      .get(input.proof.nullifier) as { value: string } | undefined;
-    if (existing !== undefined) {
-      throw new Error('support nullifier already used');
     }
 
     // 6. Increment supportCount atomically and record the nullifier.

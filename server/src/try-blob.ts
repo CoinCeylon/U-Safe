@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import './env.js';
 
 const collectArgs = (): string[] => process.argv.slice(2).filter((value) => value !== 'bash');
 const [fileArg] = collectArgs();

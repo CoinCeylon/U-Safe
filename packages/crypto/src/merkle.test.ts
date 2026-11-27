@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Sha256Adapter, hash } from './hash';
 import {
+  DOMAIN_TAG_MERKLE_ZERO,
   computeZeroNodes,
   MerkleTree,
 } from './merkle';
@@ -32,15 +33,17 @@ describe('computeZeroNodes', () => {
     }
   });
 
-  it('each deeper zero node is the inner hash of the previous with itself', async () => {
+  it('each deeper zero node uses the dedicated zero domain tag', async () => {
     const adapter = new Sha256Adapter();
     const nodes = await computeZeroNodes(3, adapter);
     const expected = await adapter.hash(
-      'merkle-inner',
+      DOMAIN_TAG_MERKLE_ZERO,
       nodes[0]!,
       nodes[0]!,
     );
     expect(nodes[1]!).toEqual(expected);
+    const inner = await adapter.hash('merkle-inner', nodes[0]!, nodes[0]!);
+    expect(nodes[1]!).not.toEqual(inner);
   });
 });
 
@@ -82,10 +85,44 @@ describe('MerkleTree proof and verify', () => {
       enc.encode('only-leaf'),
       proof,
       0,
-      tree.getRoot(),
+      tree.root(),
       new Sha256Adapter(),
+      10,
     );
     expect(ok).toBe(true);
+  });
+
+  it('verifies a valid two-leaf proof', async () => {
+    const tree = await makeTree(20);
+    await tree.insert(enc.encode('leaf-left'));
+    await tree.insert(enc.encode('leaf-right'));
+    const root = tree.root();
+    for (const index of [0, 1]) {
+      const leaf = index === 0 ? 'leaf-left' : 'leaf-right';
+      const ok = await MerkleTree.verify(
+        enc.encode(leaf),
+        tree.proof(index),
+        index,
+        root,
+        new Sha256Adapter(),
+        20,
+      );
+      expect(ok).toBe(true);
+    }
+  });
+
+  it('rejects a proof whose path length is not the tree depth', async () => {
+    const tree = await makeTree(20);
+    await tree.insert(enc.encode('leaf'));
+    const ok = await MerkleTree.verify(
+      enc.encode('leaf'),
+      [],
+      0,
+      tree.root(),
+      new Sha256Adapter(),
+      20,
+    );
+    expect(ok).toBe(false);
   });
 
   it('verifies proofs for leaves at different positions', async () => {
@@ -106,6 +143,7 @@ describe('MerkleTree proof and verify', () => {
         i,
         root,
         new Sha256Adapter(),
+        10,
       );
       expect(ok).toBe(true);
     }
@@ -125,6 +163,7 @@ describe('MerkleTree proof and verify', () => {
       0,
       tree.getRoot(),
       new Sha256Adapter(),
+      10,
     );
     expect(ok).toBe(false);
   });
@@ -140,6 +179,7 @@ describe('MerkleTree proof and verify', () => {
       0,
       tree.getRoot(),
       new Sha256Adapter(),
+      10,
     );
     expect(ok).toBe(false);
   });
@@ -175,6 +215,7 @@ describe('MerkleTree proof and verify', () => {
         i,
         rootAfter,
         new Sha256Adapter(),
+        20,
       );
       expect(ok).toBe(true);
     }

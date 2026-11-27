@@ -7,7 +7,9 @@ import {
   generateRoleKeyPair,
   hashFile,
   openPayload,
+  parseEncryptedChunks,
   sealPayload,
+  serializeEncryptedChunks,
   stripImage,
   unwrapAesKeyBytes,
   wrapAesKeyBytes,
@@ -123,8 +125,37 @@ const fileHashBox = resultBox('SHA-256 of file', '—');
 const encryptedHashBox = resultBox('SHA-256 of encrypted bytes', '—');
 const wrappedKeyBox = resultBox('Wrapped AES key (hex)', '—');
 
+const toHex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+
+const fromHex = (hex: string): Uint8Array => {
+  const clean = hex.replace(/\s+/g, '');
+  if (clean.length % 2 !== 0) {
+    throw new Error('encrypted data must have an even number of hex characters');
+  }
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < clean.length; i += 2) {
+    const value = Number.parseInt(clean.slice(i, i + 2), 16);
+    if (Number.isNaN(value)) {
+      throw new Error('encrypted data is not valid hex');
+    }
+    bytes[i / 2] = value;
+  }
+  return bytes;
+};
+
+// Editable ciphertext box (Human Test 2, step 4): editing one character here
+// must make decryption fail.
+const ciphertextBox = document.createElement('textarea');
+ciphertextBox.className =
+  'mt-4 h-32 w-full rounded border border-slate-300 p-2 font-mono text-xs break-all';
+ciphertextBox.setAttribute(
+  'aria-label',
+  'Serialized encrypted data (hex). Edit one character to test tamper detection.',
+);
+ciphertextBox.placeholder = 'Encrypted data appears here after you press Encrypt.';
+
 let strippedFile: File | null = null;
-let encryptedChunks: { index: number; data: Uint8Array }[] | null = null;
 let aesKeyRaw: Uint8Array | null = null;
 let totalBytes = 0;
 let wrappedKey: Uint8Array | null = null;
@@ -147,13 +178,13 @@ fileInput.onchange = () => {
   }
   fileInfo.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB · ${file.type || 'application/octet-stream'}`;
   strippedFile = null;
-  encryptedChunks = null;
   aesKeyRaw = null;
   wrappedKey = null;
   privateKey = null;
   fileHashBox.querySelector('div:last-child')!.textContent = '—';
   encryptedHashBox.querySelector('div:last-child')!.textContent = '—';
   wrappedKeyBox.querySelector('div:last-child')!.textContent = '—';
+  ciphertextBox.value = '';
 };
 
 // ---------- Step 2: Strip ----------
@@ -202,20 +233,36 @@ const encryptBtn = btn('Encrypt file', async () => {
     return;
   }
   const result = await encryptFile(file);
-  encryptedChunks = result.chunks;
   aesKeyRaw = result.key;
   totalBytes = result.totalBytes;
   encryptStatus.textContent = `Encrypted ${result.chunks.length} chunk(s), ${(result.totalBytes / 1024).toFixed(1)} KB total`;
   encryptStatus.className = 'text-sm font-medium py-1 px-2 rounded inline-block bg-green-100 text-green-800';
 
-  const hash = await hashFile(file);
-  encryptedHashBox.querySelector('div:last-child')!.textContent = Array.from(hash)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  // Hash the *encrypted* bytes, exactly as the submission pipeline does for
+  // the evidence identifier (M019), and put the same bytes in the editable box.
+  const serialized = serializeEncryptedChunks(result.chunks);
+  const encryptedFile = new File(
+    [serialized as unknown as BlobPart],
+    `${file.name}.enc`,
+  );
+  const hash = await hashFile(encryptedFile);
+  encryptedHashBox.querySelector('div:last-child')!.textContent = toHex(hash);
+  ciphertextBox.value = toHex(serialized);
 });
 const encryptStatus = status('Not yet encrypted');
 const encryptStep = step('3. Encrypt (AES-256-GCM, 1 MB chunks)', encryptBtn);
-encryptStep.append(encryptStatus, fileHashBox);
+encryptStep.append(
+  encryptStatus,
+  encryptedHashBox,
+  ciphertextBox,
+  (() => {
+    const hint = document.createElement('p');
+    hint.className = 'mt-2 text-xs text-slate-500';
+    hint.textContent =
+      'The encrypted data is editable. Change one character to test that tampering is detected.';
+    return hint;
+  })(),
+);
 
 // ---------- Step 4: Wrap key ----------
 const wrapBtn = btn('Wrap key with RSA-OAEP', async () => {
@@ -238,13 +285,21 @@ wrapStep.append(wrapStatus, wrappedKeyBox);
 
 // ---------- Step 5: Decrypt ----------
 const decryptBtn = btn('Unwrap & decrypt', async () => {
-  if (!wrappedKey || !privateKey || !encryptedChunks || aesKeyRaw === null) {
+  if (!wrappedKey || !privateKey || aesKeyRaw === null) {
     alert('Wrap a key first');
     return;
   }
+  // Decrypt from the editable box, so Human Test 2 step 4 can tamper with the
+  // ciphertext and see an error.
+  const edited = ciphertextBox.value.trim();
+  if (edited === '') {
+    alert('Encrypt a file first');
+    return;
+  }
+  const editedChunks = parseEncryptedChunks(fromHex(edited));
   const rawAesKey = await unwrapAesKeyBytes(wrappedKey, privateKey);
   const decrypted = await decryptFile(
-    encryptedChunks,
+    editedChunks,
     rawAesKey,
     totalBytes,
   );

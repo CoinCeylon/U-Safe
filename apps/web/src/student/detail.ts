@@ -10,7 +10,8 @@
 // in encrypted SecureStore so the button survives a reload.
 
 import type { Status } from '@usafe/shared';
-import { getStudentSecret } from './unlock';
+import { friendlyError } from '../lib/offline';
+import { getStudentSecret, getUnlockedUniversityId } from './unlock';
 import { getCachedCredential, refreshCredential } from './credential';
 import { ensureUnlocked } from './session';
 import { hasSupported, rememberSupported } from './supported';
@@ -20,6 +21,12 @@ import {
   submitSupport,
 } from './support';
 import { toast } from '../ui/toast';
+import { getCommunityKey } from './submit';
+import {
+  loadComplaintDescription,
+  loadOutcomeMessage,
+} from './complaintContent';
+import { rememberComplaintText } from './complaint-text';
 
 interface HistoryEntryView {
   status: Status;
@@ -35,9 +42,35 @@ interface ComplaintView {
   status: Status;
   supportCount: number;
   ownerRole: string;
+  payloadHash: string;
   escalated: boolean;
   outcomeHash: string | null;
   createdAt: string;
+}
+
+export interface DetailStateSummary {
+  status: string;
+  showEscalation: boolean;
+  showOutcome: boolean;
+}
+
+/**
+ * Pure state summary used by the detail page and its tests. Covers the four
+ * M055 states: not started, pending investigation, escalated and finished.
+ */
+export function detailStateSummary(complaint: {
+  status: Status;
+  escalated: boolean;
+  outcomeHash: string | null;
+}): DetailStateSummary {
+  return {
+    status: statusLabel(complaint.status),
+    showEscalation: complaint.escalated,
+    showOutcome:
+      complaint.status === 'finished' &&
+      complaint.outcomeHash !== null &&
+      complaint.outcomeHash !== '',
+  };
 }
 
 export async function renderDetail(
@@ -50,10 +83,24 @@ export async function renderDetail(
     return;
   }
 
-  const cred = getCachedCredential();
+  // Rebuild the in-memory credential after a fresh enrolment or module reload.
+  let cred = getCachedCredential();
   if (!cred) {
-    outlet.innerHTML = '<p class="text-slate-600">Credential not cached.</p>';
-    return;
+    const universityIdForCredential =
+      getUnlockedUniversityId() ??
+      sessionStorage.getItem('usafe-student-university');
+    if (universityIdForCredential === null) {
+      outlet.innerHTML =
+        '<p class="text-sm text-slate-600">Your enrollment credential is not ready yet. Go back to the feed and unlock your student secret again.</p>';
+      return;
+    }
+    try {
+      cred = await refreshCredential(universityIdForCredential);
+    } catch {
+      outlet.innerHTML =
+        '<p class="text-sm text-slate-600">Could not rebuild your enrollment credential. Unlock your student secret and try again.</p>';
+      return;
+    }
   }
 
   const universityId = cred.universityId;
@@ -97,9 +144,10 @@ export async function renderDetail(
     heading.textContent = `Complaint ${complaint.id}`;
     card.append(heading);
 
+    const state = detailStateSummary(complaint);
     const meta = document.createElement('p');
     meta.className = 'mt-1 text-xs text-slate-500';
-    meta.textContent = `${titleCase(complaint.category)} • ${complaint.urgency} • ${statusLabel(complaint.status)} • filed ${formatAge(complaint.createdAt)}`;
+    meta.textContent = `${titleCase(complaint.category)} • ${complaint.urgency} • ${state.status} • filed ${formatAge(complaint.createdAt)}`;
     card.append(meta);
 
     const supportLine = document.createElement('p');
@@ -107,7 +155,7 @@ export async function renderDetail(
     supportLine.textContent = supportText(complaint.supportCount);
     card.append(supportLine);
 
-    if (complaint.escalated) {
+    if (state.showEscalation) {
       const notice = document.createElement('p');
       notice.className =
         'mt-3 rounded border border-danger bg-danger-light px-3 py-2 text-sm text-danger';
@@ -121,13 +169,14 @@ export async function renderDetail(
     description.textContent =
       complaint.ownerRole === 'ugc'
         ? 'Details restricted to the UGC'
-        : 'Description is stored in the encrypted payload and will appear here once submission encryption is enabled.';
+        : 'Loading description…';
     card.append(description);
 
-    if (complaint.status === 'finished' && complaint.outcomeHash) {
-      const outcome = document.createElement('p');
+    let outcome: HTMLParagraphElement | null = null;
+    if (state.showOutcome) {
+      outcome = document.createElement('p');
       outcome.className = 'mt-3 text-sm text-slate-600';
-      outcome.textContent = `Outcome recorded (${complaint.outcomeHash.slice(0, 12)}…)`;
+      outcome.textContent = 'Loading outcome…';
       card.append(outcome);
     }
 
@@ -211,8 +260,9 @@ export async function renderDetail(
             await rememberSupported(complaintId);
             toast('You already support this complaint.', 'info');
           } else {
+            // Offline clicks get a friendly offline message; nothing was sent.
             toast(
-              error instanceof Error ? error.message : 'Could not support this complaint.',
+              friendlyError(error, 'Could not support this complaint.'),
               'danger',
             );
           }
@@ -230,8 +280,63 @@ export async function renderDetail(
 
     container.append(card, supportButton, timeline, back);
     outlet.replaceChildren(container);
-  } catch (e) {
-    outlet.innerHTML = `<p class="text-danger">Failed to load complaint: ${e instanceof Error ? e.message : String(e)}</p>`;
+
+    // Decrypt the sealed description and outcome with the university community
+    // key. Staff-involved complaints remain restricted to the UGC (M054/M055).
+    let communityKey: Uint8Array | null = null;
+    if (complaint.ownerRole !== 'ugc') {
+      try {
+        communityKey = await getCommunityKey(
+          fetch,
+          secret,
+          universityId,
+          cred,
+        );
+      } catch {
+        communityKey = null;
+      }
+    }
+
+    void loadComplaintDescription({
+      payloadHash: complaint.payloadHash,
+      ownerRole: complaint.ownerRole,
+      communityKey,
+    }).then((content) => {
+      if (content.kind === 'text') {
+        description.textContent = content.text;
+        rememberComplaintText(universityId, complaint.id, content.text);
+      } else if (content.kind === 'restricted') {
+        description.textContent = 'Details restricted to the UGC';
+      } else {
+        description.textContent = 'Description unavailable.';
+      }
+    });
+
+    const outcomeHash = complaint.outcomeHash;
+    if (outcome !== null && outcomeHash !== null) {
+      void loadOutcomeMessage(outcomeHash, communityKey).then((content) => {
+        if (content.kind === 'text') {
+          outcome.textContent = `Outcome: ${content.text}`;
+        } else if (content.kind === 'restricted') {
+          outcome.textContent = 'Outcome restricted to the UGC.';
+        } else {
+          outcome.textContent = `Outcome recorded (${outcomeHash.slice(0, 12)}…)`;
+        }
+      });
+    }
+  } catch (error) {
+    outlet.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'text-sm text-danger';
+    message.textContent = friendlyError(
+      error,
+      'Could not load this complaint. Please try again.',
+    );
+    const back = document.createElement('a');
+    back.href = '#/feed';
+    back.className = 'text-sm text-primary underline';
+    back.textContent = 'Back to community feed';
+    outlet.append(message, back);
   }
 }
 

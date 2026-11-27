@@ -45,15 +45,24 @@ describe('privacy lint', () => {
     expect(violations).toEqual([]);
   });
 
-  it('logger configuration redacts everything except path, status and duration', () => {
+  it('logger configuration redacts everything except pathname, status and duration', () => {
     const appSource = readFileSync(join(srcDir, 'app.ts'), 'utf8');
-    expect(appSource).toContain('path: request.url');
     expect(appSource).toContain('statusCode: reply.statusCode');
     expect(appSource).toContain('durationMs: reply.elapsedTime');
     const hook = appSource.match(/app\.addHook\('onResponse'[\s\S]*?done\(\);/)?.[0] ?? '';
-    expect(hook).toContain('path: request.url');
-    expect(hook).toContain('statusCode: reply.statusCode');
-    expect(hook).toContain('durationMs: reply.elapsedTime');
+    // The pathname is derived from request.url with the query string removed.
+    expect(hook).toContain("new URL(request.url, 'http://localhost').pathname");
+    expect(hook).not.toContain('path: request.url,');
     expect(hook).not.toMatch(/request\.body/);
+    expect(hook).not.toContain('query');
+  });
+
+  it('startup logging does not include host, port or secrets', () => {
+    const indexSource = readFileSync(join(srcDir, 'index.ts'), 'utf8');
+    expect(indexSource).toContain("app.log.info('server started')");
+    const startupLog =
+      indexSource.match(/app\.log\.info\([^)]*'server started'\)/)?.[0] ?? '';
+    expect(startupLog).not.toContain('config.');
+    expect(startupLog).not.toContain('DATABASE_PATH');
   });
 });

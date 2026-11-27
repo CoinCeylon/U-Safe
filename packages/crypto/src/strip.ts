@@ -203,6 +203,23 @@ export async function stripImage(file: File): Promise<StripImageResult> {
   }
 
   if (!hasCanvasSupport()) {
+    // Node and other canvas-less environments can still remove the EXIF
+    // segment from a JPEG byte-for-byte without re-encoding. This is a
+    // lossless strip (pixels are untouched) and makes the EXIF guarantee
+    // testable outside a browser (M018).
+    if (file.type === 'image/jpeg') {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (hasExifSegment(bytes)) {
+        const strippedBytes = stripExifFromJpegBytes(bytes);
+        return {
+          file: new File([strippedBytes as unknown as BlobPart], file.name, {
+            type: file.type,
+            lastModified: file.lastModified,
+          }),
+          stripped: true,
+        };
+      }
+    }
     return { file, stripped: false };
   }
 

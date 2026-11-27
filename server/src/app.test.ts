@@ -26,6 +26,7 @@ const config: Config = {
   WEB_ORIGIN: 'http://localhost:5173',
   DATABASE_PATH: ':memory:',
   EMAIL_HASH_SALT: 'test-salt',
+  COMMUNITY_DELIVERY_SECRET: 'delivery-secret',
   MAIL_MODE: 'dev',
   SMTP_HOST: '',
   SMTP_PORT: 587,
@@ -312,5 +313,156 @@ describe('M047 complaint routes', () => {
     });
 
     expect(response.statusCode).toBe(501);
+  });
+});
+
+describe('M025 roster import route', () => {
+  let db: Database.Database;
+  let app: FastifyInstance | undefined;
+  let registrarToken: string;
+
+  beforeEach(async () => {
+    db = new Database(':memory:');
+    runMigrations(db, migrationsDir);
+    db.prepare(
+      `INSERT INTO universities
+         (id, name, domain, enrollment_ceiling, status)
+       VALUES ('uni-1', 'University One', 'one.edu', 500, 'active')`,
+    ).run();
+    const staffId = db
+      .prepare(
+        `INSERT INTO staff (university_id, role, address, public_key_jwk)
+         VALUES ('uni-1', 'registrar', 'registrar-1', NULL)`,
+      )
+      .run().lastInsertRowid;
+    registrarToken = issueSession(db, Number(staffId));
+    const ledger = new MockLedger(db);
+    app = await buildApp(config, db, undefined, ledger, undefined, ledger);
+  });
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+    db.close();
+  });
+
+  it('rejects an unauthenticated import', async () => {
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/api/university/uni-1/roster',
+      headers: { 'content-type': 'text/csv' },
+      payload: 'email,index_number\nstudent@one.edu,1\n',
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('imports 100 rows and reports a bad row by line number', async () => {
+    const rows = ['email,index_number'];
+    for (let i = 0; i < 100; i += 1) {
+      rows.push(`student${i}@one.edu,${i}`);
+    }
+    const ok = await app!.inject({
+      method: 'POST',
+      url: '/api/university/uni-1/roster',
+      headers: {
+        authorization: `Bearer ${registrarToken}`,
+        'content-type': 'text/csv',
+      },
+      payload: rows.join('\n'),
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json<{ accepted: number; rejected: number }>()).toMatchObject({
+      accepted: 100,
+      rejected: 0,
+    });
+
+    const bad = await app!.inject({
+      method: 'POST',
+      url: '/api/university/uni-1/roster',
+      headers: {
+        authorization: `Bearer ${registrarToken}`,
+        'content-type': 'text/csv',
+      },
+      payload:
+        'email,index_number\nnew@one.edu,1\nnot-an-email,2\noutsider@other.edu,3\n',
+    });
+    expect(bad.statusCode).toBe(200);
+    expect(bad.json<{ accepted: number; errors: Array<{ row: number }> }>())
+      .toMatchObject({
+        accepted: 1,
+        rejected: 2,
+      });
+    const errors = bad.json<{ errors: Array<{ row: number }> }>().errors;
+    expect(errors.map((entry) => entry.row)).toEqual([3, 4]);
+  });
+});
+
+describe('M032 staff authentication', () => {
+  let db: Database.Database;
+  let app: FastifyInstance | undefined;
+
+  beforeEach(async () => {
+    db = new Database(':memory:');
+    runMigrations(db, migrationsDir);
+    db.prepare(
+      `INSERT INTO staff (university_id, role, address, public_key_jwk)
+       VALUES (NULL, 'investigator', 'addr_test1staff', NULL)`,
+    ).run();
+    const ledger = new MockLedger(db);
+    app = await buildApp(config, db, undefined, ledger, undefined, ledger);
+  });
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+    db.close();
+  });
+
+  it('returns a challenge from POST and rejects a wrong signature', async () => {
+    const challenge = await app!.inject({
+      method: 'POST',
+      url: '/api/auth/challenge',
+    });
+    expect(challenge.statusCode).toBe(200);
+    const nonce = challenge.json<{ nonce: string }>().nonce;
+    expect(nonce).toMatch(/^[a-f0-9]{32}$/);
+
+    const login = await app!.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        address: 'addr_test1staff',
+        key: 'ab'.repeat(32),
+        signature: 'cd'.repeat(64),
+        nonce,
+      },
+    });
+    expect(login.statusCode).toBe(401);
+
+    // A used nonce cannot be replayed even with a different body.
+    const replay = await app!.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        address: 'addr_test1staff',
+        key: 'ab'.repeat(32),
+        signature: 'cd'.repeat(64),
+        nonce,
+      },
+    });
+    expect(replay.statusCode).toBe(401);
+  });
+
+  it('does not expose the old GET challenge route', async () => {
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/auth/challenge',
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('requireStaff rejects a missing token', async () => {
+    const response = await app!.inject({ method: 'GET', url: '/api/staff/me' });
+    expect(response.statusCode).toBe(401);
   });
 });

@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeWallet } from './wallet';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.resetModules();
+});
 
 describe('FakeWallet (development only)', () => {
   it('derives a deterministic signature for the same message and passphrase', async () => {
@@ -43,6 +48,30 @@ describe('FakeWallet (development only)', () => {
     const a = new FakeWallet('dev-passphrase');
     await expect(a.signMessage('hello')).rejects.toThrow(
       'Fake wallet is not connected',
+    );
+  });
+
+  it('remembers the fake passphrase across a module reload', async () => {
+    vi.stubGlobal('window', { location: { search: '?fakewallet=1' } });
+    const values = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, String(value)),
+      removeItem: (key: string) => void values.delete(key),
+    });
+
+    vi.resetModules();
+    const first = await import('./wallet');
+    await first.connectWallet({ passphrase: 'round-passphrase' });
+    const firstAddress = first.getAddress();
+
+    // A reload clears module state but keeps sessionStorage.
+    vi.resetModules();
+    const second = await import('./wallet');
+    await second.connectWallet();
+    expect(second.getAddress()).toBe(firstAddress);
+    expect(values.get('usafe-dev-fake-wallet-passphrase')).toBe(
+      'round-passphrase',
     );
   });
 });

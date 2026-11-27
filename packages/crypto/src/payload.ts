@@ -11,16 +11,31 @@ export function generateCommunityKey(): Uint8Array {
 }
 
 // A sealed payload: AES-256-GCM encryption of the JSON payload plus the
-// SHA-256 hash of the plaintext for integrity verification.
+// SHA-256 hash of the exact sealed bytes (`iv || ciphertext`). Hashing the
+// bytes that are actually stored, rather than the plaintext, means the hash
+// on the ledger always matches the stored blob (M017).
 export interface SealedPayload {
   iv: Uint8Array;
   ciphertext: Uint8Array;
   payloadHash: Uint8Array;
 }
 
-// Serializes a payload object to JSON, computes its SHA-256 hash, encrypts it
-// with the community key, and returns the sealed payload together with the
-// hash. Tampering with the ciphertext or the hash causes openPayload to fail.
+// Concatenates `iv || ciphertext` into the exact sealed byte sequence. The
+// hash and the decryption both use these bytes.
+export function sealedPayloadBytes(sealed: {
+  iv: Uint8Array;
+  ciphertext: Uint8Array;
+}): Uint8Array {
+  const bytes = new Uint8Array(sealed.iv.length + sealed.ciphertext.length);
+  bytes.set(sealed.iv);
+  bytes.set(sealed.ciphertext, sealed.iv.length);
+  return bytes;
+}
+
+// Serializes a payload object to JSON, encrypts it with the community key,
+// and returns the sealed payload together with the SHA-256 of the exact sealed
+// bytes. Tampering with the ciphertext changes the hash and also fails the
+// GCM authentication check in openPayload.
 //
 // sealPayload(payload, communityKey) -> { iv, ciphertext, payloadHash }
 export async function sealPayload(
@@ -29,36 +44,34 @@ export async function sealPayload(
 ): Promise<SealedPayload> {
   const encoder = new TextEncoder();
   const plaintext = encoder.encode(JSON.stringify(payload));
+  const sealed = await encryptBytes(plaintext, communityKey);
+  const iv = sealed.subarray(0, 12);
+  const ciphertext = sealed.subarray(12);
   const hashBuffer = await crypto.subtle.digest(
     'SHA-256',
-    plaintext as unknown as BufferSource, // eslint-disable-line @typescript-eslint/no-unnecessary-type-assertion
+    sealedPayloadBytes({ iv, ciphertext }) as unknown as BufferSource,
   );
-  const payloadHash = new Uint8Array(hashBuffer);
-  const sealed = await encryptBytes(plaintext, communityKey);
   return {
-    iv: sealed.subarray(0, 12),
-    ciphertext: sealed.subarray(12),
-    payloadHash,
+    iv,
+    ciphertext,
+    payloadHash: new Uint8Array(hashBuffer),
   };
 }
 
-// Decrypts a sealed payload with the community key, verifies the SHA-256
-// hash of the plaintext matches payloadHash, and returns the parsed JSON
-// object. Throws if the key is wrong or the payload was tampered with.
+// Decrypts a sealed payload with the community key, verifies the SHA-256 of
+// the sealed bytes matches payloadHash, and returns the parsed JSON object.
+// Throws if the key is wrong or the payload was tampered with.
 export async function openPayload(
   sealed: SealedPayload,
   communityKey: Uint8Array,
 ): Promise<unknown> {
-  const sealedBytes = new Uint8Array(
-    sealed.iv.length + sealed.ciphertext.length,
-  );
-  sealedBytes.set(sealed.iv);
-  sealedBytes.set(sealed.ciphertext, sealed.iv.length);
+  const sealedBytes = sealedPayloadBytes(sealed);
 
-  const plaintext = await decryptBytes(sealedBytes, communityKey);
+  // Verify the sealed bytes before attempting decryption, so a tampered hash
+  // is reported as a hash mismatch rather than a generic GCM failure.
   const hashBuffer = await crypto.subtle.digest(
     'SHA-256',
-    plaintext as unknown as BufferSource,
+    sealedBytes as unknown as BufferSource,
   );
   const expectedHash = new Uint8Array(hashBuffer);
   if (
@@ -68,6 +81,7 @@ export async function openPayload(
     throw new Error('payload hash mismatch: payload may have been tampered');
   }
 
+  const plaintext = await decryptBytes(sealedBytes, communityKey);
   const json = new TextDecoder().decode(plaintext);
   return JSON.parse(json);
 }

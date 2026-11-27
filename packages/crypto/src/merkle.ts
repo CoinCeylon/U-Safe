@@ -3,6 +3,11 @@
 // hash (domain separation).
 export const DOMAIN_TAG_MERKLE_INNER = 'merkle-inner';
 
+// Domain tag used to precompute the roots of empty subtrees. It is distinct
+// from the inner-node tag so a zero leaf's subtree root can never be confused
+// with a real inner node hash (domain separation, M014).
+export const DOMAIN_TAG_MERKLE_ZERO = 'merkle-zero';
+
 // Number of bytes in a SHA-256 digest.
 const DIGEST_SIZE = 32;
 
@@ -25,7 +30,7 @@ export async function computeZeroNodes(
 
   for (let d = 1; d <= depth; d += 1) {
     current = await hashAdapter.hash(
-      DOMAIN_TAG_MERKLE_INNER,
+      DOMAIN_TAG_MERKLE_ZERO,
       current,
       current,
     );
@@ -64,6 +69,13 @@ export class MerkleTree {
       this.nodes[level] = [];
     }
     this.leafCount = 0;
+  }
+
+  // Returns the current Merkle root (hash at the top level, position 0).
+  // `root()` is the name used in the roadmap; `getRoot()` is kept for the
+  // existing callers.
+  root(): Uint8Array {
+    return this.getRoot();
   }
 
   // Returns the current Merkle root (hash at the top level, position 0).
@@ -150,6 +162,10 @@ export class MerkleTree {
   // Verifies a membership proof: recomputes the root from `leaf`, `proof` and
   // `index`, and compares it to `root`. Static so it can be used without a
   // tree instance. Returns true if the recomputed root matches `root`.
+  //
+  // The proof must contain exactly `expectedDepth` siblings. Requiring the
+  // fixed depth prevents a forged proof that claims `commitment === root`
+  // with an empty path (M038).
   static async verify(
     leaf: Uint8Array,
     proof: Uint8Array[],
@@ -158,7 +174,11 @@ export class MerkleTree {
     hashAdapter: {
       hash(domainTag: string, ...parts: Uint8Array[]): Promise<Uint8Array>;
     },
+    expectedDepth: number = MERKLE_TREE_DEPTH,
   ): Promise<boolean> {
+    if (proof.length !== expectedDepth) {
+      return false;
+    }
     let current: Uint8Array = new Uint8Array(leaf);
     let currentIndex = index;
     for (let level = 0; level < proof.length; level += 1) {

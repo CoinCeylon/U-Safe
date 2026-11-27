@@ -1,15 +1,22 @@
-// Student file complaint form (M057/M058).
+// Student file complaint form (M057/M058/M059/M060).
 //
 // M057: mandatory description (40-4000 characters), category, urgency, staff
 // involvement, optional accused details and plain-language guidance.
 // M058: evidence picker with up to 5 files of 25 MB each. Images are stripped
 // with stripImage; videos, audio and documents keep their metadata, so the
 // form asks for an acknowledgement before those can be attached.
-//
-// Submission is still a placeholder: the submission pipeline is M060.
+// M059: while the description is typed (and once more before submit), the
+// form compares it with the open complaints of the same university in the
+// browser. Close matches above the token-overlap threshold are shown with a
+// "Support this one instead" link so support is not split across duplicates.
+// M060: the submit handler runs the encrypted submission pipeline with a
+// visible progress list. A failure shows the failed step and a retry button;
+// retrying reuses the cached encrypted blobs, so nothing is uploaded twice.
 
-import { MAX_EVIDENCE_FILES } from '@usafe/shared';
+import { FILING_LIMIT_PER_MONTH, MAX_EVIDENCE_FILES } from '@usafe/shared';
 import { button } from '../ui/button';
+import { toast } from '../ui/toast';
+import { friendlyError, isOfflineError, OFFLINE_MESSAGE } from '../lib/offline';
 import {
   evidenceKind,
   formatBytes,
@@ -19,6 +26,25 @@ import {
   type EvidenceKind,
   type EvidenceRejection,
 } from './evidence';
+import { getRememberedUniversity, ensureUnlocked } from './session';
+import { loadOpenComplaintTexts, type OpenComplaintText } from './complaint-text';
+import { findSimilarComplaints, MAX_DUPLICATE_SUGGESTIONS } from './similar';
+import { getCachedCredential, refreshCredential } from './credential';
+import { getStudentSecret } from './unlock';
+import {
+  countFilingsInMonth,
+  loadFilingReceipts,
+  saveFilingReceipt,
+} from './filings';
+import {
+  FilingLimitError,
+  SUBMIT_STEPS,
+  StepError,
+  SubmissionPipeline,
+  type StepProgress,
+  type SubmissionInput,
+  type SubmitStepId,
+} from './submit';
 
 export interface FileComplaintInput {
   description: string;
@@ -74,8 +100,9 @@ function previewFor(file: File, kind: EvidenceKind): {
 }
 
 export function renderFileComplaintForm(outlet: HTMLElement): void {
-  // Filing slots remaining (mock value: there is no usage endpoint yet).
-  const slotsLeft = 3;
+  // Filing slots remaining, derived from this browser's receipts for the
+  // current year-month (M057). The locked limit is FILING_LIMIT_PER_MONTH.
+  let slotsLeft = FILING_LIMIT_PER_MONTH;
 
   const section = document.createElement('section');
   section.className = 'flex flex-col gap-4 max-w-md mx-auto py-4';
@@ -113,6 +140,72 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
     'w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-light';
   descriptionInput.placeholder = 'Describe what happened (minimum 40 characters)';
   form.append(descriptionLabel, descriptionInput);
+
+  // ---- Duplicate suggestions (M059) ----
+  // Surfaced while the student types, and refreshed before the final submit
+  // step. The comparison runs entirely in the browser against descriptions
+  // the portal has cached locally; nothing typed here is sent anywhere.
+  const suggestionsBox = document.createElement('div');
+  suggestionsBox.className = 'hidden flex-col gap-2 rounded-md border border-warning bg-warning-light p-3';
+  form.append(suggestionsBox);
+
+  let openTexts: OpenComplaintText[] = [];
+  const rememberedUniversity = getRememberedUniversity();
+  if (rememberedUniversity !== null) {
+    void loadOpenComplaintTexts(rememberedUniversity).then((texts) => {
+      openTexts = texts;
+      updateSuggestions();
+    });
+  }
+
+  function updateSuggestions(): void {
+    const description = descriptionInput.value.trim();
+    if (description.length < 40 || openTexts.length === 0) {
+      suggestionsBox.replaceChildren();
+      suggestionsBox.classList.add('hidden');
+      return;
+    }
+
+    const similar = findSimilarComplaints(description, openTexts);
+    if (similar.length === 0) {
+      suggestionsBox.replaceChildren();
+      suggestionsBox.classList.add('hidden');
+      return;
+    }
+
+    suggestionsBox.replaceChildren();
+    const intro = document.createElement('p');
+    intro.className = 'text-sm font-medium text-slate-800';
+    intro.textContent =
+      'This sounds similar to an open complaint. Supporting the existing one keeps support together instead of splitting it.';
+    suggestionsBox.append(intro);
+
+    for (const complaint of similar.slice(0, MAX_DUPLICATE_SUGGESTIONS)) {
+      const row = document.createElement('div');
+      row.className = 'flex flex-wrap items-center justify-between gap-2 text-sm';
+      const info = document.createElement('p');
+      info.className = 'text-slate-700';
+      info.textContent =
+        `Complaint ${complaint.id} · ${titleCase(complaint.category)} · ` +
+        `${complaint.supportCount} ${complaint.supportCount === 1 ? 'support' : 'supports'}`;
+      const instead = document.createElement('a');
+      instead.href = `#/complaint/${encodeURIComponent(complaint.id)}`;
+      instead.className =
+        'rounded-md border border-primary bg-white px-3 py-2 text-sm font-medium text-primary hover:bg-primary-light';
+      instead.textContent = 'Support this one instead';
+      row.append(info, instead);
+      suggestionsBox.append(row);
+    }
+    suggestionsBox.classList.remove('hidden');
+  }
+
+  let suggestionTimer: ReturnType<typeof setTimeout> | undefined;
+  descriptionInput.addEventListener('input', () => {
+    if (suggestionTimer !== undefined) {
+      clearTimeout(suggestionTimer);
+    }
+    suggestionTimer = setTimeout(updateSuggestions, 600);
+  });
 
   const categoryLabel = document.createElement('label');
   categoryLabel.htmlFor = 'complaint-category';
@@ -350,8 +443,34 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
   const submit = button({ label: 'Submit complaint', type: 'submit' });
   form.append(submit);
 
+  // Receipts are encrypted with the student secret, so this only succeeds
+  // once the secret is unlocked; the form is still usable before that and the
+  // server enforces the limit regardless.
+  if (getStudentSecret() !== null) {
+    void loadFilingReceipts()
+      .then((receipts) => {
+        const used = countFilingsInMonth(receipts);
+        slotsLeft = Math.max(0, FILING_LIMIT_PER_MONTH - used);
+        slotsInfo.textContent = `Filing slots left this month: ${slotsLeft}`;
+        if (slotsLeft === 0) {
+          submit.disabled = true;
+          const limitNote = document.createElement('p');
+          limitNote.className = 'text-xs text-warning';
+          limitNote.textContent =
+            'You have used both filing slots this month. You can support existing complaints instead.';
+          form.append(limitNote);
+        }
+      })
+      .catch(() => {
+        // A storage failure must not block the form.
+      });
+  }
+
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    // One final comparison before the submit step continues (M059), so a
+    // suggestion that arrived with the corpus load is never missed.
+    updateSuggestions();
     const description = descriptionInput.value.trim();
     if (description.length < 40) {
       showErrors([{ name: 'Description', reason: 'Write at least 40 characters.' }]);
@@ -374,8 +493,6 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
     }
     showErrors([]);
 
-    // Handed to the submission pipeline in M060. Kept here so M057 validation
-    // still produces the complete input object.
     const input: FileComplaintInput = {
       description,
       category: categorySelect.value as FileComplaintInput['category'],
@@ -387,19 +504,233 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
       input.accusedPersonDetails = accusedInput.value.trim();
     }
 
-    form.replaceChildren();
-    const success = document.createElement('p');
-    success.className = 'text-sm text-slate-600';
-    success.textContent =
-      `Thank you. Your ${input.urgency} complaint was submitted with ` +
-      `${input.evidenceFiles.length} evidence file(s).`;
-    form.append(success);
+    // The pipeline takes over the screen; the form values are already
+    // captured, so the form itself can go.
+    form.remove();
+    renderSubmissionFlow(section, input);
   });
 
   updateEvidenceState();
   outlet.append(section);
 }
 
+// ---------------------------------------------------------------------------
+// Submission flow (M060)
+// ---------------------------------------------------------------------------
+
+function createProgressList(): {
+  element: HTMLElement;
+  update: (progress: StepProgress) => void;
+  reset: () => void;
+} {
+  const list = document.createElement('ol');
+  list.className = 'flex flex-col gap-2';
+  const statusLabels = new Map<SubmitStepId, HTMLElement>();
+  const detailLabels = new Map<SubmitStepId, HTMLElement>();
+
+  for (const step of SUBMIT_STEPS) {
+    const row = document.createElement('li');
+    row.className = 'flex items-baseline justify-between gap-3 text-sm';
+    const label = document.createElement('span');
+    label.className = 'text-slate-700';
+    label.textContent = step.label;
+    const detail = document.createElement('span');
+    detail.className = 'text-xs text-slate-400';
+    detail.textContent = '';
+    const status = document.createElement('span');
+    status.className = 'text-xs text-slate-400';
+    status.textContent = 'waiting';
+    row.append(label, detail, status);
+    list.append(row);
+    statusLabels.set(step.id, status);
+    detailLabels.set(step.id, detail);
+  }
+
+  const apply = (progress: StepProgress): void => {
+    const status = statusLabels.get(progress.id);
+    const detail = detailLabels.get(progress.id);
+    if (status === undefined || detail === undefined) {
+      return;
+    }
+    if (progress.detail !== '') {
+      detail.textContent = progress.detail;
+    }
+    if (progress.phase === 'active') {
+      status.textContent = 'working…';
+      status.className = 'text-xs text-primary';
+    } else if (progress.phase === 'done') {
+      status.textContent = 'done';
+      status.className = 'text-xs text-success';
+    } else if (progress.phase === 'failed') {
+      status.textContent = 'failed';
+      status.className = 'text-xs text-danger';
+    } else {
+      status.textContent = 'waiting';
+      status.className = 'text-xs text-slate-400';
+    }
+  };
+
+  return {
+    element: list,
+    update: apply,
+    reset: () => {
+      for (const step of SUBMIT_STEPS) {
+        apply({ id: step.id, phase: 'pending', detail: '' });
+        detailLabels.get(step.id)!.textContent = '';
+      }
+    },
+  };
+}
+
+function renderSubmissionFlow(
+  section: HTMLElement,
+  input: FileComplaintInput,
+): void {
+  const area = document.createElement('div');
+  area.className = 'flex flex-col gap-3';
+  section.append(area);
+
+  const heading = document.createElement('h3');
+  heading.className = 'text-base font-semibold text-slate-900';
+  heading.textContent = 'Submitting your complaint';
+  const note = document.createElement('p');
+  note.className = 'text-xs text-slate-500';
+  note.textContent =
+    'Your files are encrypted in this browser before anything is uploaded. The last step waits a random few seconds so the moment you press submit cannot be linked to your complaint.';
+  const progress = createProgressList();
+  const status = document.createElement('p');
+  status.setAttribute('role', 'status');
+  status.className = 'text-sm text-slate-600';
+  area.append(heading, note, progress.element, status);
+
+  let pipeline: SubmissionPipeline | null = null;
+  let busy = false;
+
+  const fail = (message: string, failedStep?: SubmitStepId): void => {
+    status.className = 'text-sm text-danger';
+    status.textContent = message;
+    if (failedStep !== undefined) {
+      progress.update({ id: failedStep, phase: 'failed', detail: '' });
+    }
+    const retry = button({
+      label: 'Retry from the failed step',
+      onClick: () => void attempt(),
+    });
+    area.append(retry);
+    retry.focus();
+  };  const attempt = async (): Promise<void> => {
+    if (busy) {
+      return;
+    }
+    busy = true;
+    // Remove any retry button from a previous failed attempt.
+    for (const child of Array.from(area.children)) {
+      if (child instanceof HTMLButtonElement) {
+        child.remove();
+      }
+    }
+    progress.reset();
+    status.className = 'text-sm text-slate-600';
+    status.textContent = 'Working… you can leave this page open.';
+
+    const universityId = getRememberedUniversity();
+    if (universityId === null) {
+      busy = false;
+      fail('Enrol before filing a complaint.');
+      return;
+    }
+
+    try {
+      await ensureUnlocked(universityId);
+    } catch (error) {
+      busy = false;
+      fail(
+        error instanceof Error
+          ? `Could not unlock your student secret: ${error.message}`
+          : 'Could not unlock your student secret.',
+      );
+      return;
+    }
+
+    const secret = getStudentSecret();
+    if (secret === null) {
+      busy = false;
+      fail('Student secret is not available.');
+      return;
+    }
+
+    const getCredential = async () =>
+      getCachedCredential() ?? (await refreshCredential(universityId));
+
+    if (pipeline === null) {
+      const submissionInput: SubmissionInput = {
+        universityId,
+        ...input,
+      };
+      pipeline = new SubmissionPipeline(
+        submissionInput,
+        secret,
+        getCredential,
+        { saveReceipt: (receipt) => saveFilingReceipt(receipt) },
+      );
+    }
+
+    try {
+      const { complaintId } = await pipeline.run(progress.update);
+      progress.update({ id: 'receipt', phase: 'done', detail: '' });
+      status.className = 'text-sm text-success';
+      status.textContent = 'Submitted. Your complaint is now on record.';
+      const success = document.createElement('div');
+      success.className = 'rounded-md bg-success-light p-3 text-sm text-slate-700';
+      const line = document.createElement('p');
+      line.textContent =
+        `Thank you. Your complaint ${complaintId} was filed with ` +
+        `${input.evidenceFiles.length} evidence file(s) and starts at 0 supports. ` +
+        'A receipt was saved in this browser only; clearing site data removes it.';
+      const links = document.createElement('p');
+      links.className = 'mt-1 flex flex-wrap gap-3';
+      const link = document.createElement('a');
+      link.href = `#/complaint/${encodeURIComponent(complaintId)}`;
+      link.className = 'text-primary underline';
+      link.textContent = 'View your complaint';
+      const mine = document.createElement('a');
+      mine.href = '#/my-complaints';
+      mine.className = 'text-primary underline';
+      mine.textContent = 'Open My complaints';
+      links.append(link, mine);
+      success.append(line, links);
+      area.append(success);
+      toast('Your complaint was submitted.', 'success');
+    } catch (error) {
+      if (error instanceof StepError) {
+        // An offline failure gets the friendly offline wording; the retry
+        // button then resumes without re-uploading anything.
+        const message = isOfflineError(error.stepCause)
+          ? OFFLINE_MESSAGE
+          : `Step "${labelForStep(error.step)}" failed: ${error.message}`;
+        fail(message, error.step);
+      } else if (error instanceof FilingLimitError) {
+        status.className = 'text-sm text-warning';
+        status.textContent = error.message;
+      } else {
+        fail(friendlyError(error, 'Submission failed.'));
+      }
+    } finally {
+      busy = false;
+    }
+  };
+
+  void attempt();
+}
+
+function labelForStep(id: SubmitStepId): string {
+  return SUBMIT_STEPS.find((step) => step.id === id)?.label ?? id;
+}
+
 export function formatFileSize(bytes: number): string {
   return `(${formatBytes(bytes)})`;
+}
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).replace('_', ' ');
 }

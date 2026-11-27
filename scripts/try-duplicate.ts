@@ -8,6 +8,7 @@ import type Database from 'better-sqlite3';
 import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import '../server/src/env.js';
 import { openDatabase } from '../server/src/db/index.js';
 
 export interface TryDuplicateResult {

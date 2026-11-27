@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hashFile, HASH_STREAM_CHUNK_BYTES } from './hashFile';
+import { encryptBytes } from './file';
 
 const encoder = new TextEncoder();
 
@@ -32,6 +33,15 @@ function digestSha256(data: Uint8Array): Promise<Uint8Array> {
 }
 
 describe('hashFile', () => {
+  it('matches the known SHA-256 vector for "abc"', async () => {
+    // echo -n abc | sha256sum
+    // ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    const hash = await hashFile(fileFromBytes(toBytes('abc')));
+    expect(Buffer.from(hash).toString('hex')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  });
+
   it('hashes an empty file to the SHA-256 of empty input', async () => {
     const file = fileFromBytes(new Uint8Array(0));
     const hash = await hashFile(file);
@@ -89,5 +99,19 @@ describe('hashFile', () => {
     const file = fileFromBytes(toBytes('anything'));
     const hash = await hashFile(file);
     expect(hash).toHaveLength(32);
+  });
+
+  it('hashes a File built from encrypted bytes (the evidence identifier)', async () => {
+    const plaintext = toBytes('evidence whose encrypted bytes are hashed');
+    const key = crypto.getRandomValues(new Uint8Array(32));
+    const encrypted = await encryptBytes(plaintext, key);
+    const encryptedFile = fileFromBytes(encrypted, 'evidence.enc');
+
+    const hash = await hashFile(encryptedFile);
+    const expected = await digestSha256(encrypted);
+    expect(hash).toEqual(expected);
+
+    // Sanity: the encrypted-bytes hash is not the plaintext hash.
+    expect(hash).not.toEqual(await digestSha256(plaintext));
   });
 });

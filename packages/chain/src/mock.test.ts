@@ -74,6 +74,11 @@ const newDb = (): { db: Database.Database; dir: string } => {
       note_hash TEXT,
       FOREIGN KEY (complaint_id) REFERENCES ml_complaints (id)
     );
+    CREATE TABLE ml_complaint_sequence (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      next_value INTEGER NOT NULL
+    );
+    INSERT INTO ml_complaint_sequence (id, next_value) VALUES (1, 1);
   `);
   return { db, dir };
 };
@@ -117,6 +122,7 @@ const verifyProof = async (
     leafIndex,
     Buffer.from(rootHex, 'hex'),
     hashAdapter,
+    20,
   );
 };
 
@@ -840,9 +846,11 @@ describe('MockLedger (M037)', () => {
       proof: supportProof,
     });
     expect(result0.supportCount).toBe(1);
-    expect(publishedEvents).toHaveLength(1);
-    expect(publishedEvents[0]!.type).toBe('complaint.supported');
-    expect(publishedEvents[0]!.id).toBe(complaintId);
+    const supportedEvents = publishedEvents.filter(
+      (event) => event.type === 'complaint.supported',
+    );
+    expect(supportedEvents).toHaveLength(1);
+    expect(supportedEvents[0]!.id).toBe(complaintId);
 
     // Same support nullifier again → rejected.
     await expect(

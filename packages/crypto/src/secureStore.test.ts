@@ -25,6 +25,29 @@ describe('SecureStore put/get/delete', () => {
     expect(got).toBe('my secret value');
   });
 
+  it('values survive a reload on the same storage backend', async () => {
+    // A reload discards the SecureStore instance but keeps IndexedDB. Two
+    // instances over one backend model that: the new instance must decrypt
+    // what the old one wrote.
+    const backend = new MemoryStorage();
+    const secret = encoder.encode('student-secret-a');
+    const beforeReload = new SecureStore(secret, backend);
+    await beforeReload.put('enrolment', JSON.stringify({ leafIndex: 3 }));
+
+    const afterReload = new SecureStore(secret, backend);
+    expect(await afterReload.get('enrolment')).toBe(
+      JSON.stringify({ leafIndex: 3 }),
+    );
+  });
+
+  it('a different student secret cannot read stored values', async () => {
+    const backend = new MemoryStorage();
+    const writer = new SecureStore(encoder.encode('secret-a'), backend);
+    await writer.put('k', 'v');
+    const reader = new SecureStore(encoder.encode('secret-b'), backend);
+    await expect(reader.get('k')).rejects.toThrow();
+  });
+
   it('returns null for a missing key', async () => {
     const store = new SecureStore(
       encoder.encode('student-secret-a'),

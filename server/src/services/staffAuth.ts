@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { OwnerRole } from '@usafe/shared';
+import { checkSignature } from '@meshsdk/core';
 
 export interface StaffAccount {
   id: number;
@@ -40,7 +41,48 @@ const rowToStaff = (row: Record<string, unknown>): StaffAccount => ({
   public_key_jwk: typeof row.public_key_jwk === 'string' ? row.public_key_jwk : null,
 });
 
+export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+// Single-use login challenges. Kept in memory only: a challenge must never be
+// persisted or logged, and it expires after CHALLENGE_TTL_MS.
+const challenges = new Map<string, number>();
+
+const pruneChallenges = (now: number): void => {
+  for (const [nonce, expiresAt] of challenges) {
+    if (expiresAt <= now) {
+      challenges.delete(nonce);
+    }
+  }
+};
+
 export const createChallenge = (): string => randomBytes(16).toString('hex');
+
+/** Generates and stores a single-use challenge nonce. */
+export const issueChallenge = (): string => {
+  const now = Date.now();
+  pruneChallenges(now);
+  const nonce = createChallenge();
+  challenges.set(nonce, now + CHALLENGE_TTL_MS);
+  return nonce;
+};
+
+/**
+ * Checks and consumes a challenge nonce. A nonce works at most once and only
+ * while it is unexpired, so a captured signature cannot be replayed.
+ */
+export const consumeChallenge = (nonce: string): boolean => {
+  const expiresAt = challenges.get(nonce);
+  if (expiresAt === undefined) {
+    return false;
+  }
+  challenges.delete(nonce);
+  return expiresAt > Date.now();
+};
+
+/** Test hook: drops every outstanding challenge. */
+export const clearChallenges = (): void => {
+  challenges.clear();
+};
 
 export const findStaffByAddress = (
   db: Database.Database,
@@ -83,14 +125,15 @@ export const verifySession = (
   return rowToStaff(row);
 };
 
-export const loginWithSignature = (
+export const loginWithSignature = async (
   db: Database.Database,
   input: {
     address: string;
     signature?: string;
     key?: string;
+    nonce?: string;
   },
-): string | null => {
+): Promise<string | null> => {
   const staff = findStaffByAddress(db, input.address);
   if (staff === null) {
     return null;
@@ -101,9 +144,31 @@ export const loginWithSignature = (
   if (typeof input.key !== 'string' || input.key.length === 0) {
     return null;
   }
-  // Mock/dev verification: real CIP-8 signature verification is added with the
-  // chain adapters in Group 8. In mock mode a well-formed request for a known
-  // staff address is accepted.
+  if (typeof input.nonce !== 'string' || input.nonce.length === 0) {
+    return null;
+  }
+
+  // The nonce must be one we issued and must not have been used already.
+  if (!consumeChallenge(input.nonce)) {
+    return null;
+  }
+
+  try {
+    // Real CIP-8 verification through Mesh's checkSignature: it checks the
+    // COSE_Sign1 signature over the challenge and that the signing key
+    // belongs to the staff wallet address.
+    const valid = await checkSignature(
+      input.nonce,
+      { key: input.key, signature: input.signature },
+      staff.address,
+    );
+    if (!valid) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   return issueSession(db, staff.id);
 };
 
@@ -185,9 +250,18 @@ const isDatabase = (value: unknown): value is Database.Database => {
   return typeof value === 'object' && value !== null && 'prepare' in value;
 };
 
-export const requireStaff = (roleOrDb?: string | Database.Database, role?: string) => {
+export const requireStaff = (
+  roleOrDb?: string | string[] | Database.Database,
+  role?: string | string[],
+) => {
   const db = isDatabase(roleOrDb) ? roleOrDb : null;
-  const requiredRole = isDatabase(roleOrDb) ? role : roleOrDb;
+  const required = isDatabase(roleOrDb) ? role : roleOrDb;
+  const requiredRoles: string[] | undefined =
+    required === undefined
+      ? undefined
+      : Array.isArray(required)
+        ? required
+        : [required];
 
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const database = db ?? (request.server as unknown as { db?: Database.Database }).db;
@@ -210,7 +284,7 @@ export const requireStaff = (roleOrDb?: string | Database.Database, role?: strin
       reply.code(401).send({ error: 'invalid token' });
       return;
     }
-    if (requiredRole !== undefined && staff.role !== requiredRole) {
+    if (requiredRoles !== undefined && !requiredRoles.includes(staff.role)) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }

@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { CATEGORIES, STATUSES, URGENCIES } from './constants';
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_STATUSES,
+  DEFAULT_URGENCIES,
+} from './constants';
 import type {
   Category,
   ComplaintRecord,
@@ -12,9 +16,9 @@ import type {
   Urgency,
 } from './types';
 
-export const categorySchema = z.enum(CATEGORIES) satisfies z.ZodType<Category>;
-export const urgencySchema = z.enum(URGENCIES) satisfies z.ZodType<Urgency>;
-export const statusSchema = z.enum(STATUSES) satisfies z.ZodType<Status>;
+export const categorySchema = z.enum(DEFAULT_CATEGORIES) satisfies z.ZodType<Category>;
+export const urgencySchema = z.enum(DEFAULT_URGENCIES) satisfies z.ZodType<Urgency>;
+export const statusSchema = z.enum(DEFAULT_STATUSES) satisfies z.ZodType<Status>;
 
 export const ownerRoleSchema = z.enum(['university', 'ugc']) satisfies z.ZodType<OwnerRole>;
 export const universityStatusSchema = z.enum([

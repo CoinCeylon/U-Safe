@@ -39,6 +39,14 @@ export interface EnrollmentLedger {
   enrollCommitment(
     input: EnrollCommitmentInput,
   ): EnrollmentReceipt | Promise<EnrollmentReceipt>;
+  /**
+   * Optional two-phase enrollment used to keep the whole enrollment in one
+   * SQLite transaction (M029). `commit()` runs synchronous inserts and joins
+   * the caller's transaction.
+   */
+  prepareEnrollment?(
+    input: EnrollCommitmentInput,
+  ): Promise<{ receipt: EnrollmentReceipt; commit: () => void }>;
   verifyEnrollmentProof?(proof: unknown): boolean | Promise<boolean>;
 }
 
@@ -59,6 +67,9 @@ export interface ComplaintLedger {
 }
 
 const DOMAIN_TAG_MERKLE_INNER = 'merkle-inner';
+// Must match packages/crypto/src/merkle.ts so the stub's roots and paths are
+// compatible with MerkleTree.verify after the M014 zero-tag change.
+const DOMAIN_TAG_MERKLE_ZERO = 'merkle-zero';
 
 type Bytes = Buffer<ArrayBufferLike>;
 
@@ -68,17 +79,24 @@ const lengthPrefix = (bytes: Uint8Array): Bytes => {
   return Buffer.concat([prefix, Buffer.from(bytes)]);
 };
 
-const hashPair = (left: Bytes, right: Bytes): Bytes =>
+const hashPairWithTag = (
+  domainTag: string,
+  left: Bytes,
+  right: Bytes,
+): Bytes =>
   createHash('sha256')
-    .update(lengthPrefix(Buffer.from(DOMAIN_TAG_MERKLE_INNER, 'utf8')))
+    .update(lengthPrefix(Buffer.from(domainTag, 'utf8')))
     .update(lengthPrefix(left))
     .update(lengthPrefix(right))
     .digest();
 
+const hashPair = (left: Bytes, right: Bytes): Bytes =>
+  hashPairWithTag(DOMAIN_TAG_MERKLE_INNER, left, right);
+
 const zeros: Bytes[] = [Buffer.alloc(32)];
 for (let level = 1; level <= MERKLE_TREE_DEPTH; level += 1) {
   const previous = zeros[level - 1]!;
-  zeros.push(hashPair(previous, previous));
+  zeros.push(hashPairWithTag(DOMAIN_TAG_MERKLE_ZERO, previous, previous));
 }
 
 interface TreeState {

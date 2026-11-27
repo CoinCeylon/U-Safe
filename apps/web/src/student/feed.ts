@@ -5,9 +5,19 @@
 // a refresh. Cards link to the detail page where the support button lives.
 
 import { toast } from '../ui/toast';
-import { getStudentSecret } from './unlock';
-import { getCachedCredential, refreshCredential } from './credential';
+import { button } from '../ui/button';
+import { friendlyError } from '../lib/offline';
+import { getStudentSecret, getUnlockedUniversityId } from './unlock';
+import {
+  getCachedCredential,
+  refreshCredential,
+  stopWatchingRoots,
+  watchRoots,
+} from './credential';
 import { ensureUnlocked } from './session';
+import { getCommunityKey } from './submit';
+import { loadComplaintDescription } from './complaintContent';
+import { rememberComplaintText } from './complaint-text';
 
 interface FeedComplaint {
   id: string;
@@ -16,6 +26,7 @@ interface FeedComplaint {
   status: string;
   supportCount: number;
   ownerRole: string;
+  payloadHash: string;
   createdAt: string;
   escalated: boolean;
 }
@@ -29,20 +40,51 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
     eventSource.close();
     eventSource = null;
   }
+  // Stop any previous root watcher before starting a new one for this view.
+  stopWatchingRoots();
 
   if (getStudentSecret() === null) {
     outlet.replaceChildren(unlockPrompt(outlet));
     return;
   }
 
-  const cred = getCachedCredential();
+  // The credential cache is in memory only. After a fresh enrolment (or a
+  // module reload) it can be empty even though the student is unlocked, so
+  // rebuild it here instead of telling the student to "go back to the feed".
+  let cred = getCachedCredential();
   if (!cred) {
-    outlet.innerHTML = '<p class="text-slate-600">Credential not cached.</p>';
-    return;
+    const universityId =
+      getUnlockedUniversityId() ??
+      sessionStorage.getItem('usafe-student-university');
+    if (universityId === null) {
+      outlet.innerHTML =
+        '<p class="text-sm text-slate-600">Your enrollment credential is not ready yet. Go back to the feed and unlock your student secret again.</p>';
+      return;
+    }
+    try {
+      cred = await refreshCredential(universityId);
+    } catch {
+      outlet.innerHTML =
+        '<p class="text-sm text-slate-600">Could not rebuild your enrollment credential. Unlock your student secret and try again.</p>';
+      return;
+    }
   }
 
   const universityId = cred.universityId;
   const univParam = encodeURIComponent(universityId);
+  const secret = getStudentSecret();
+
+  // Fetch the community key once for this view so cards can decrypt their
+  // sealed payloads. A missing key leaves descriptions unavailable rather
+  // than showing a misleading placeholder.
+  let communityKey: Uint8Array | null = null;
+  if (secret !== null) {
+    try {
+      communityKey = await getCommunityKey(fetch, secret, universityId, cred);
+    } catch {
+      communityKey = null;
+    }
+  }
 
   const wrapper = document.createElement('section');
   wrapper.className = 'flex flex-col gap-3 max-w-xl mx-auto py-2';
@@ -89,7 +131,7 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
   wrapper.append(controls, list);
   outlet.replaceChildren(wrapper);
 
-  const loadComplaints = async (): Promise<void> => {
+  const loadComplaints = async (): Promise<boolean> => {
     try {
       const response = await fetch(`/api/complaints?university=${univParam}`);
       if (!response.ok) {
@@ -110,46 +152,93 @@ export async function renderFeed(outlet: HTMLElement): Promise<void> {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
 
-      renderList(list, complaints);
-    } catch {
-      // Error details are deliberately not shown to the student.
-      list.innerHTML =
-        '<p class="text-danger">Could not load complaints. Please try again.</p>';
+      renderList(list, complaints, universityId, communityKey);
+      return true;
+    } catch (error) {
+      // Error details are deliberately not shown to the student, but the
+      // message says whether it looks like an offline failure.
+      renderLoadError(list, error, async () => {
+        const reloaded = await loadComplaints();
+        if (reloaded) {
+          connectEvents();
+        }
+      });
+      return false;
     }
+  };
+
+  const connectEvents = (): void => {
+    if (eventSource !== null) {
+      eventSource.close();
+      eventSource = null;
+    }
+    eventSource = new EventSource(`/api/events?university=${univParam}`);
+    eventSource.onmessage = (event) => {
+      try {
+        const data = awaitSafeJson(String(event.data)) as { type?: unknown };
+        if (
+          data.type === 'complaint.created' ||
+          data.type === 'complaint.supported' ||
+          data.type === 'complaint.status' ||
+          data.type === 'complaint.escalated'
+        ) {
+          void loadComplaints();
+          if (data.type === 'complaint.created') {
+            toast('A new complaint was filed.', 'info');
+          }
+        }
+      } catch {
+        // Ignore malformed event data; live updates are best-effort.
+      }
+    };
+    // A dropped connection closes the stream; the next successful load or
+    // the retry button reconnects it.
+    eventSource.onerror = () => {
+      if (eventSource !== null) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
   };
 
   statusFilter.addEventListener('change', () => void loadComplaints());
   categoryFilter.addEventListener('change', () => void loadComplaints());
   sort.addEventListener('change', () => void loadComplaints());
 
-  await loadComplaints();
-
-  eventSource = new EventSource(`/api/events?university=${univParam}`);
-  eventSource.onmessage = (event) => {
-    try {
-      const data = awaitSafeJson(String(event.data)) as { type?: unknown };
-      if (
-        data.type === 'complaint.created' ||
-        data.type === 'complaint.supported' ||
-        data.type === 'complaint.status' ||
-        data.type === 'complaint.escalated'
-      ) {
-        void loadComplaints();
-        if (data.type === 'complaint.created') {
-          toast('A new complaint was filed.', 'info');
-        }
-      }
-    } catch {
-      // Ignore malformed event data; live updates are best-effort.
-    }
-  };
-  eventSource.onerror = () => {
-    eventSource?.close();
-    eventSource = null;
-  };
+  if (await loadComplaints()) {
+    connectEvents();
+    // Refresh the local credential when the university root changes, so a
+    // student who enrolled before newer students can still support (M053).
+    watchRoots(universityId);
+  }
 }
 
-function renderList(outlet: HTMLElement, complaints: FeedComplaint[]): void {
+function renderLoadError(
+  outlet: HTMLElement,
+  error: unknown,
+  retry: () => Promise<void>,
+): void {
+  outlet.replaceChildren();
+  const message = document.createElement('p');
+  message.className = 'text-sm text-danger';
+  message.textContent = friendlyError(
+    error,
+    'Could not load complaints. Please try again.',
+  );
+  const retryButton = button({
+    label: 'Try again',
+    variant: 'secondary',
+    onClick: () => void retry(),
+  });
+  outlet.append(message, retryButton);
+}
+
+function renderList(
+  outlet: HTMLElement,
+  complaints: FeedComplaint[],
+  universityId: string,
+  communityKey: Uint8Array | null,
+): void {
   outlet.replaceChildren();
   if (complaints.length === 0) {
     const empty = document.createElement('p');
@@ -187,10 +276,27 @@ function renderList(outlet: HTMLElement, complaints: FeedComplaint[]): void {
 
     const description = document.createElement('p');
     description.className = 'mt-2 text-sm text-slate-600';
-    description.textContent =
-      complaint.ownerRole === 'ugc'
-        ? 'Details restricted to the UGC'
-        : 'Open the complaint to read its encrypted payload.';
+    if (complaint.ownerRole === 'ugc') {
+      description.textContent = 'Details restricted to the UGC';
+    } else {
+      description.textContent = 'Loading description…';
+      void loadComplaintDescription({
+        payloadHash: complaint.payloadHash,
+        ownerRole: complaint.ownerRole,
+        communityKey,
+      }).then((content) => {
+        if (content.kind === 'text') {
+          description.textContent = content.text;
+          // Feed text is legitimately readable, so it also feeds the M059
+          // duplicate-suggestion cache.
+          rememberComplaintText(universityId, complaint.id, content.text);
+        } else if (content.kind === 'restricted') {
+          description.textContent = 'Details restricted to the UGC';
+        } else {
+          description.textContent = 'Description unavailable.';
+        }
+      });
+    }
     card.append(description);
 
     const link = document.createElement('a');
