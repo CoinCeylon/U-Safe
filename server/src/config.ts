@@ -16,6 +16,10 @@ const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASS: z.string().default(''),
   MAIL_FROM: z.string().default('noreply@usafe.local'),
+  // Wraps each university community key for delivery to newly enrolled
+  // students. Optional so tests and local servers without a demo key set can
+  // still start; community key delivery is disabled when it is empty.
+  COMMUNITY_DELIVERY_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

@@ -619,7 +619,7 @@ async function runEnrollment(
     await saveEnrollment(
       state.universityId,
       result.leafIndex,
-      result.communityKeyWrapped,
+      result.communityKey,
     );
 
     onChange({ enrollStatus: 'done' });

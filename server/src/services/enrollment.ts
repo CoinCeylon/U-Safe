@@ -2,9 +2,11 @@ import type Database from 'better-sqlite3';
 import type { EnrollmentLedger, EnrollmentReceipt } from './ledger.js';
 import type { TicketService } from './tickets.js';
 import { getUniversity } from './universities.js';
+import { unwrapForDelivery } from './communityKeys.js';
 
 export interface EnrollResult extends EnrollmentReceipt {
-  communityKeyWrapped: string | null;
+  /** Raw 32-byte AES community key, base64, for the newly enrolled student. */
+  communityKey: string | null;
 }
 
 export class EnrollmentError extends Error {
@@ -27,6 +29,7 @@ export class EnrollmentService {
     private readonly db: Database.Database,
     private readonly tickets: TicketService,
     private readonly ledger: EnrollmentLedger,
+    private readonly communityDeliverySecret?: string,
   ) {}
 
   async enroll(ticket: string, commitment: string): Promise<EnrollResult> {
@@ -86,19 +89,25 @@ export class EnrollmentService {
         .run(new Date().toISOString(), details.rosterId);
 
       return {
-        communityKeyWrapped: university.community_key_wrapped_for_ugc,
+        wrappedForDelivery: university.community_key_wrapped_for_delivery,
       };
     });
 
     try {
-      const { communityKeyWrapped } = transaction();
+      const { wrappedForDelivery } = transaction();
       const receipt: EnrollmentReceipt =
         prepared?.receipt ??
         (await this.ledger.enrollCommitment({
           universityId: peeked?.universityId ?? '',
           commitment,
         }));
-      return { ...receipt, communityKeyWrapped };
+      // M065: hand the raw community key to the new student (unwrapped from
+      // the server-side delivery copy). Done after the commit succeeded.
+      const communityKey = await unwrapForDelivery(
+        wrappedForDelivery,
+        this.communityDeliverySecret,
+      );
+      return { ...receipt, communityKey };
     } catch (error) {
       if (error instanceof EnrollmentError) {
         throw error;

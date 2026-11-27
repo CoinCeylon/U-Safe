@@ -172,6 +172,55 @@ export const loginWithSignature = async (
   return issueSession(db, staff.id);
 };
 
+/**
+ * Dev-only (DEV_LOGIN=true): issue a session token for a seeded staff
+ * account chosen by id, so the portal dropdown can sign in as any role.
+ */
+export const devLoginByStaffId = (
+  db: Database.Database,
+  staffId: number,
+): string | null => {
+  const row = db
+    .prepare('SELECT id FROM staff WHERE id = ?')
+    .get(staffId) as Record<string, unknown> | undefined;
+  if (row === undefined) {
+    return null;
+  }
+  return issueSession(db, Number(row.id));
+};
+
+export interface DevAccount {
+  id: number;
+  role: string;
+  universityId: string | null;
+  universityName: string | null;
+  address: string;
+}
+
+/**
+ * Dev-only (DEV_LOGIN=true): list seeded staff accounts for the portal
+ * dropdown. Contains no personal data, only id, role, university and the
+ * demo wallet address.
+ */
+export const listDevAccounts = (db: Database.Database): DevAccount[] => {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.role, s.university_id, s.address, u.name AS university_name
+       FROM staff s LEFT JOIN universities u ON u.id = s.university_id
+       ORDER BY s.university_id IS NULL, s.university_id, s.role, s.id`,
+    )
+    .all() as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: Number(row.id),
+    role: String(row.role),
+    universityId:
+      typeof row.university_id === 'string' ? row.university_id : null,
+    universityName:
+      typeof row.university_name === 'string' ? row.university_name : null,
+    address: String(row.address),
+  }));
+};
+
 export const devLogin = (
   db: Database.Database,
   options: { role?: string; universityId?: string | null } = {},

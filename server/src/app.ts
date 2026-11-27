@@ -14,6 +14,13 @@ import {
 import { z } from 'zod';
 import type { Config } from './config.js';
 import { getUniversity, listUniversities } from './services/universities.js';
+import {
+  academicYearFor,
+  getUgcPublicKeyJwk,
+  isValidCommunityKey,
+  isValidWrappedKey,
+  wrapForDelivery,
+} from './services/communityKeys.js';
 import { importRoster } from './services/roster.js';
 import { createMailer, type Mailer } from './services/mailer.js';
 import { OtpService } from './services/otp.js';
@@ -35,6 +42,8 @@ import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
   devLogin,
   issueChallenge,
+  devLoginByStaffId,
+  listDevAccounts,
   loginWithSignature,
   requireStaff,
   staffOwnerRole,
@@ -67,6 +76,12 @@ const complaintStatusSchema = z.object({
   newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
   outcomeHash: z.string().min(1).nullable().default(null),
 });
+const communityKeySchema = z
+  .object({
+    wrappedForUgc: z.string().min(1),
+    communityKey: z.string().min(1),
+  })
+  .strict();
 const complaintListQuerySchema = z
   .object({
     university: z.string().min(1).optional(),
@@ -175,7 +190,12 @@ export const buildApp = async (
   const otp = new OtpService(db, mailer, config.EMAIL_HASH_SALT);
   const tickets = new TicketService(db, config.EMAIL_HASH_SALT);
   (app as { decorate: (k: string, v: unknown) => void }).decorate('db', db);
-  const enrollment = new EnrollmentService(db, tickets, ledger);
+  const enrollment = new EnrollmentService(
+    db,
+    tickets,
+    ledger,
+    config.COMMUNITY_DELIVERY_SECRET,
+  );
   const complaints = complaintLedger ?? new MockLedger(db, { publish });
   const enrollmentProof = requireEnrollmentProof(complaints);
 
@@ -243,6 +263,7 @@ export const buildApp = async (
   app.get('/api/health', () => ({
     ok: true,
     mode: config.CHAIN_MODE,
+    devLogin: process.env.DEV_LOGIN === 'true',
   }));
 
   app.get('/api/universities', () => {
@@ -305,6 +326,158 @@ export const buildApp = async (
         reply.code(400);
         return { error: (error as Error).message };
       }
+    },
+  );
+
+  // M064: staff registers the university RSA public key after the role key
+  // setup flow. Only staff of that university may set it; the JWK must be a
+  // public RSA key (no private components).
+  const publicKeySchema = z.object({ publicKeyJwk: z.string().min(1) });
+
+  app.put<{ Params: { id: string } }>(
+    '/api/university/:id/public-key',
+    { preHandler: requireStaff() },
+    (request, reply) => {
+      const staff = request.staff;
+      if (
+        staff === undefined ||
+        staff.university_id === null ||
+        staff.university_id !== request.params.id
+      ) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      const parsed = publicKeySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      let jwk: JsonWebKey;
+      try {
+        jwk = JSON.parse(parsed.data.publicKeyJwk) as JsonWebKey;
+      } catch {
+        reply.code(400);
+        return { error: 'invalid public key' };
+      }
+      if (
+        jwk.kty !== 'RSA' ||
+        typeof jwk.n !== 'string' ||
+        typeof jwk.e !== 'string' ||
+        'd' in jwk
+      ) {
+        reply.code(400);
+        return { error: 'invalid public key' };
+      }
+
+      db.prepare(
+        'UPDATE universities SET public_key_jwk = ? WHERE id = ?',
+      ).run(parsed.data.publicKeyJwk, request.params.id);
+      return { ok: true };
+    },
+  );
+
+  // M065: the community key admin screen reads the current key metadata and
+  // the UGC public key used to wrap the new key. Admin staff only, and only
+  // for their own university.
+  app.get<{ Params: { id: string } }>(
+    '/api/university/:id/community-key',
+    { preHandler: requireStaff() },
+    (request, reply) => {
+      const staff = request.staff;
+      if (
+        staff === undefined ||
+        staff.university_id === null ||
+        staff.university_id !== request.params.id ||
+        staff.role !== 'admin'
+      ) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+      const university = getUniversity(db, request.params.id);
+      if (university === null) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
+      return {
+        hasKey:
+          university.community_key_wrapped_for_ugc !== null &&
+          university.community_key_wrapped_for_delivery !== null,
+        createdAt: university.community_key_created_at,
+        academicYear: university.community_key_academic_year,
+        ugcPublicKeyJwk: getUgcPublicKeyJwk(db),
+      };
+    },
+  );
+
+  // M065: the admin browser generates the AES-256 community key, wraps it for
+  // the UGC public key, and sends both the wrapped copy and the key itself
+  // over TLS. The server only stores the delivery copy wrapped under
+  // COMMUNITY_DELIVERY_SECRET. Request bodies are never logged.
+  app.post<{ Params: { id: string } }>(
+    '/api/university/:id/community-key',
+    { preHandler: requireStaff() },
+    async (request, reply) => {
+      const staff = request.staff;
+      if (
+        staff === undefined ||
+        staff.university_id === null ||
+        staff.university_id !== request.params.id ||
+        staff.role !== 'admin'
+      ) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      const university = getUniversity(db, request.params.id);
+      if (university === null) {
+        reply.code(404);
+        return { error: 'not found' };
+      }
+
+      const parsed = communityKeySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+      if (
+        !isValidCommunityKey(parsed.data.communityKey) ||
+        !isValidWrappedKey(parsed.data.wrappedForUgc)
+      ) {
+        reply.code(400);
+        return { error: 'invalid community key' };
+      }
+
+      const deliverySecret = config.COMMUNITY_DELIVERY_SECRET;
+      if (deliverySecret === undefined || deliverySecret === '') {
+        reply.code(503);
+        return { error: 'community key delivery is not configured' };
+      }
+
+      const createdAt = new Date();
+      const academicYear = academicYearFor(createdAt);
+      const wrappedForDelivery = await wrapForDelivery(
+        parsed.data.communityKey,
+        deliverySecret,
+      );
+
+      db.prepare(
+        `UPDATE universities
+         SET community_key_wrapped_for_ugc = ?,
+             community_key_wrapped_for_delivery = ?,
+             community_key_created_at = ?,
+             community_key_academic_year = ?
+         WHERE id = ?`,
+      ).run(
+        parsed.data.wrappedForUgc,
+        wrappedForDelivery,
+        createdAt.toISOString(),
+        academicYear,
+        request.params.id,
+      );
+
+      return { ok: true, createdAt: createdAt.toISOString(), academicYear };
     },
   );
 
@@ -471,14 +644,38 @@ export const buildApp = async (
   });
 
   if (process.env.DEV_LOGIN === 'true') {
-    app.post('/api/auth/dev-login', (request) => {
-      const body = (request.body ?? {}) as {
-        role?: string;
-        universityId?: string | null;
-      };
+    // Dev-only dropdown of seeded staff accounts for the M063 login page.
+    app.get('/api/auth/dev-accounts', () => ({
+      accounts: listDevAccounts(db),
+    }));
+
+    const devLoginSchema = z.object({
+      staffId: z.number().int().positive().optional(),
+      role: z.string().min(1).optional(),
+      universityId: z.string().min(1).nullish(),
+    });
+
+    app.post('/api/auth/dev-login', (request, reply) => {
+      const parsed = devLoginSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'invalid request' };
+      }
+
+      // Prefer an explicit staffId from the dropdown; fall back to the
+      // older role-based form used by earlier milestones and tests.
+      if (parsed.data.staffId !== undefined) {
+        const token = devLoginByStaffId(db, parsed.data.staffId);
+        if (token === null) {
+          reply.code(404);
+          return { error: 'unknown staff account' };
+        }
+        return { token, sessionToken: token };
+      }
+
       const token = devLogin(db, {
-        role: typeof body.role === 'string' ? body.role : undefined,
-        universityId: body.universityId ?? null,
+        role: parsed.data.role,
+        universityId: parsed.data.universityId ?? null,
       });
       return { token, sessionToken: token };
     });

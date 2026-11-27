@@ -3,7 +3,7 @@
 // Calls the server OTP and enrollment endpoints:
 //   POST /api/otp/request   {email}             -> {ok: true}
 //   POST /api/otp/verify    {email, code}       -> {ticket, universityId}
-//   POST /api/enroll        {ticket, commitment}-> {leafIndex, path, root, communityKeyWrapped}
+//   POST /api/enroll        {ticket, commitment}-> {leafIndex, path, root, communityKey}
 //
 // Commitment is a 64-char lowercase hex string (32 bytes), matching the
 // server's enrollSchema. Enrollment errors surface as friendly messages.
@@ -21,7 +21,7 @@ export interface EnrollResult {
   leafIndex: number;
   path: string[];
   root: string;
-  communityKeyWrapped: string;
+  communityKey: string | null;
 }
 
 async function requestJson<T>(input: string, body?: unknown): Promise<T> {
@@ -81,7 +81,7 @@ export async function enroll(
 export async function saveEnrollment(
   universityId: string,
   leafIndex: number,
-  communityKeyWrapped: string,
+  communityKey: string | null,
 ): Promise<void> {
   const secret = getStudentSecret();
   if (secret === null) {
@@ -91,7 +91,7 @@ export async function saveEnrollment(
   const value = JSON.stringify({
     universityId,
     leafIndex,
-    communityKey: communityKeyWrapped,
+    communityKey,
   });
   await store.put('enrollment', value);
   // The university id is not sensitive. Keeping it for the session lets a

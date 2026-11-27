@@ -93,3 +93,6 @@ M057 | fixed | slots come from `FILING_LIMIT_PER_MONTH` and local receipts, neve
 M059 | fixed | feed/detail decryption feeds the local duplicate corpus
 M060 | partial | all three portals show a shared complaint overview and the pipeline test uses two images plus one video; full role portals remain M063+/M073+
 M062 | partial | keyboard/accessibility evidence recorded in `docs/ACCESSIBILITY_REPORT.md`; no automated axe run
+M063 | done | University staff login with CIP-8 wallet sign-in and dev dropdown, sessionStorage token, seeded registrar/investigator/admin accounts, role-guarded routes, logout and access-denied views
+M064 | done | Role key setup: import a .dev-keys backup or generate an RSA-OAEP pair, passphrase-protected storage in IndexedDB, mandatory backup download, PUT /api/university/:id/public-key registration, complaint pages blocked until the key is unlocked
+M065 | done | Admin-only Community key screen creates an AES-256 key in the browser, wraps it for the UGC public key, stores a passphrase-protected local backup, posts both copies to the server (delivery copy wrapped under COMMUNITY_DELIVERY_SECRET), and enrollment now delivers the raw community key to newly enrolled students
