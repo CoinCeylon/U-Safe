@@ -105,3 +105,4 @@ M063 | fixed | the shared university wallet passes Mesh `signData(payload, addre
 M049 | fixed | onboarding step 1 now states that the university can read complaint text and evidence, that students can read text only, that the UGC can read both, and that staff-involved details are UGC-only
 M058 | fixed | image stripping is tracked as an in-flight task and submit waits for it, so a complaint cannot be filed with the original EXIF/GPS-bearing image
 M060 | fixed | a normal complaint with evidence now fails with a clear message when the university has not registered its RSA key, instead of filing evidence the university can never decrypt
+M056 | fixed | only the exact reused-support-nullifier response is treated as a quiet duplicate; invalid proofs and other 400/409 responses surface as real errors

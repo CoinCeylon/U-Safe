@@ -460,3 +460,7 @@ fixing agent did not commit anything; all changes are left for human review.
   university. If the key is missing the `keys` step now throws a clear message
   and no complaint is filed. Complaints without evidence and staff-involved
   complaints (UGC-only wrapping) are unaffected.
+- M056: `postSupport` treats only the server's exact
+  `support nullifier already used` message as a quiet duplicate. Any other
+  non-2xx response (invalid proof, wrong university, malformed context) is a
+  normal error, so the UI no longer marks an invalid support as successful.

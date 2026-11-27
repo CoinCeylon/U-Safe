@@ -1,17 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { MembershipProof } from '@usafe/shared';
 import {
   commitment,
   mockNullifier,
   verifyMembershipMock,
 } from '@usafe/crypto';
 import { computeCredential, bytesToHex } from './credential';
-import { buildSupportProof, DuplicateSupportError } from './support';
+import {
+  buildSupportProof,
+  DuplicateSupportError,
+  postSupport,
+} from './support';
 
 const randomBytes = (length: number): Uint8Array => {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return bytes;
 };
+
+const proof: MembershipProof = {
+  universityId: 'uni-1',
+  root: 'cd'.repeat(32),
+  nullifier: 'ef'.repeat(32),
+  kind: 'mock',
+  data: JSON.stringify({
+    commitment: 'ab'.repeat(32),
+    path: [],
+    context: 'support|complaint-7',
+  }),
+};
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('student support flow (M056)', () => {
   it('builds a proof that verifies against the locally cached credential', async () => {
@@ -70,5 +91,52 @@ describe('student support flow (M056)', () => {
 
   it('exposes a duplicate error type for quiet handling', () => {
     expect(new DuplicateSupportError().name).toBe('DuplicateSupportError');
+  });
+
+  it('maps only the reused support nullifier to the duplicate error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: 'support nullifier already used' }),
+          { status: 400 },
+        ),
+      ),
+    );
+
+    await expect(postSupport('complaint-7', proof)).rejects.toBeInstanceOf(
+      DuplicateSupportError,
+    );
+  });
+
+  it('surfaces other 400 responses as real errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'invalid membership proof' }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    try {
+      await postSupport('complaint-7', proof);
+      throw new Error('expected postSupport to reject');
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(DuplicateSupportError);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('invalid membership proof');
+    }
+  });
+
+  it('returns the confirmed support count', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ supportCount: 4 }), { status: 200 }),
+      ),
+    );
+
+    await expect(postSupport('complaint-7', proof)).resolves.toBe(4);
   });
 });

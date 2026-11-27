@@ -93,11 +93,10 @@ export async function postSupport(
 
   if (!response.ok) {
     const message = await readErrorMessage(response);
-    if (
-      response.status === 400 ||
-      response.status === 409 ||
-      message.includes('nullifier already used')
-    ) {
+    // Only a reused support nullifier is a quiet duplicate. Other 400/409
+    // responses (invalid proof, wrong university, malformed context) are real
+    // errors and must reach the student instead of pretending they succeeded.
+    if (message.includes('support nullifier already used')) {
       throw new DuplicateSupportError();
     }
     throw new Error(message || `Could not support complaint (HTTP ${response.status})`);
