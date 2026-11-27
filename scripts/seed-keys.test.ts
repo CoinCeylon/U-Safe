@@ -65,7 +65,8 @@ describe('seedDemoKeys', () => {
     const universities = db
       .prepare(
         `SELECT id, public_key_jwk, community_key_wrapped_for_ugc,
-                community_key_wrapped_for_delivery
+                community_key_wrapped_for_delivery,
+                community_key_created_at, community_key_academic_year
          FROM universities ORDER BY id ASC`,
       )
       .all() as Array<{
@@ -73,6 +74,8 @@ describe('seedDemoKeys', () => {
       public_key_jwk: string;
       community_key_wrapped_for_ugc: string;
       community_key_wrapped_for_delivery: string;
+      community_key_created_at: string;
+      community_key_academic_year: string;
     }>;
 
     for (const university of universities) {
@@ -101,6 +104,14 @@ describe('seedDemoKeys', () => {
       );
       expect(Buffer.from(communityKey).toString('base64')).toBe(
         delivery.communityKey,
+      );
+
+      // M065: the admin screen needs creation metadata for seeded keys.
+      expect(university.community_key_created_at).toMatch(
+        /^\d{4}-\d{2}-\d{2}T/,
+      );
+      expect(university.community_key_academic_year).toMatch(
+        /^\d{4}\/\d{4}$/,
       );
     }
   });

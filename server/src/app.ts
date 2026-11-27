@@ -36,7 +36,6 @@ import { addClient, publish, removeClient } from './services/events.js';
 import {
   CommunityKeyError,
   deliverCommunityKey,
-  getUgcPublicKeyJwk,
 } from './services/communityKey.js';
 import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
@@ -75,6 +74,7 @@ const enrollSchema = z.object({
 const complaintStatusSchema = z.object({
   newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
   outcomeHash: z.string().min(1).nullable().default(null),
+  outcomeLocator: z.string().min(1).nullable().optional(),
 });
 const communityKeySchema = z
   .object({
@@ -336,7 +336,7 @@ export const buildApp = async (
 
   app.put<{ Params: { id: string } }>(
     '/api/university/:id/public-key',
-    { preHandler: requireStaff() },
+    { preHandler: requireStaff(['admin']) },
     (request, reply) => {
       const staff = request.staff;
       if (
@@ -735,7 +735,14 @@ export const buildApp = async (
 
   app.post<{ Params: { id: string } }>(
     '/api/complaints/:id/status',
-    { preHandler: requireStaff() },
+    {
+      preHandler: requireStaff([
+        'investigator',
+        'admin',
+        'ugc',
+        'ugc_officer',
+      ]),
+    },
     async (request, reply) => {
       const parsed = complaintStatusSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -761,6 +768,7 @@ export const buildApp = async (
           complaintId: request.params.id,
           newStatus: parsed.data.newStatus,
           outcomeHash: parsed.data.outcomeHash,
+          outcomeLocator: parsed.data.outcomeLocator,
           ownerRole: staffOwnerRole(staff),
         });
       } catch (error) {
@@ -978,7 +986,14 @@ export const buildApp = async (
       reply.code(404);
       return { error: 'ugc public key not registered' };
     }
-    return { publicKeyJwk };
+    // The database stores the JWK as JSON text; clients expect the parsed
+    // object (the university metadata route keeps the text form).
+    try {
+      return { publicKeyJwk: JSON.parse(publicKeyJwk) as JsonWebKey };
+    } catch {
+      reply.code(500);
+      return { error: 'ugc public key is malformed' };
+    }
   });
 
   app.get('/api/events', (request, reply) => {
@@ -1001,15 +1016,22 @@ export const buildApp = async (
     });
   });
 
-  app.post('/api/events/publish', (request) => {
-    const body = (request.body ?? {}) as { type?: string; id?: string };
-    const event = {
-      type: typeof body.type === 'string' ? body.type : 'test.event',
-      id: typeof body.id === 'string' ? body.id : `evt-${Date.now()}`,
-    };
-    publish(event);
-    return { ok: true, event };
-  });
+  // Dev/test helper for the SSE human test. It is not registered in a
+  // production build or in automated tests (which use NODE_ENV=test).
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.NODE_ENV !== 'test'
+  ) {
+    app.post('/api/events/publish', (request) => {
+      const body = (request.body ?? {}) as { type?: string; id?: string };
+      const event = {
+        type: typeof body.type === 'string' ? body.type : 'test.event',
+        id: typeof body.id === 'string' ? body.id : `evt-${Date.now()}`,
+      };
+      publish(event);
+      return { ok: true, event };
+    });
+  }
 
   return app;
 };

@@ -13,7 +13,7 @@
 //     - BrowserWallet.enable('lace') -> BrowserWallet
 //     - browserWallet.signData(payload, address?) -> DataSignature { signature, key }
 //     - browserWallet.getUsedAddresses() -> string[]
-//   Lace wallet name: 'lace'
+//   Lace wallet id: 'lace' (the CIP-30 id; the display name is 'Lace')
 //   Lace install URL: https://lace.dev/
 //
 // Never invent Mesh SDK APIs. If @meshsdk/core changes, adapt this file and
@@ -21,7 +21,7 @@
 
 import type { BrowserWallet, DataSignature } from '@meshsdk/core';
 
-const LACE_WALLET_NAME = 'lace';
+const LACE_WALLET_ID = 'lace';
 const LACE_INSTALL_URL = 'https://lace.dev/';
 // Default passphrase used by the fake wallet when none is supplied (dev only).
 const DEV_FAKE_PASSPHRASE = 'u-safe-dev-fake-wallet';
@@ -31,6 +31,13 @@ const DEV_FAKE_PASSPHRASE = 'u-safe-dev-fake-wallet';
 const loadMesh = () => import('@meshsdk/core');
 
 export type WalletType = 'lace' | 'fake';
+
+/**
+ * True when a Mesh/CIP-30 wallet entry is Lace. Match the stable CIP-30 `id`
+ * (`lace`), not the display name (`Lace`), which is capitalised by the wallet.
+ */
+export const isLaceWallet = (wallet: { id: string }): boolean =>
+  wallet.id === LACE_WALLET_ID;
 
 export interface StudentWallet {
   connect(): Promise<void>;
@@ -63,13 +70,13 @@ class LaceWallet implements StudentWallet {
   async connect(): Promise<void> {
     const mesh = await loadMesh();
     const installed = mesh.BrowserWallet.getInstalledWallets();
-    const lace = installed.find((w) => w.name === LACE_WALLET_NAME);
+    const lace = installed.find((w) => isLaceWallet(w));
     if (!lace) {
       throw new Error(
         'Lace wallet is not installed. Install it from ' + LACE_INSTALL_URL,
       );
     }
-    this.wallet = await mesh.BrowserWallet.enable(LACE_WALLET_NAME);
+    this.wallet = await mesh.BrowserWallet.enable(LACE_WALLET_ID);
 
     const addresses = await this.wallet.getUsedAddresses();
     this.address = addresses[0] ?? null;
@@ -221,7 +228,7 @@ export async function isLaceInstalled(): Promise<boolean> {
   try {
     const mesh = await loadMesh();
     const installed = mesh.BrowserWallet.getInstalledWallets();
-    return installed.some((w) => w.name === LACE_WALLET_NAME);
+    return installed.some((w) => isLaceWallet(w));
   } catch {
     return false;
   }

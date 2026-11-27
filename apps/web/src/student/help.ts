@@ -113,6 +113,7 @@ export function renderHelpPage(outlet: HTMLElement): void {
     'You never log in. Every action carries only a cryptographic proof that you are enrolled.',
     'Your name, email and wallet address are never attached to a complaint.',
     'Complaint text of your university can be read by its students, the university and the UGC. Evidence files can only be opened by the university and the UGC — and by you, from your own receipts.',
+    'Because the server delivers the community key, the server operator could also decrypt complaint text. It cannot decrypt evidence or UGC-only staff cases.',
     'If you say a staff member is involved, only the UGC can read the details.',
     'Submissions wait a random few seconds, so nobody can link the moment you pressed a button to your complaint.',
     'What you type stays in your browser until you submit; the server only ever sees encrypted data.',

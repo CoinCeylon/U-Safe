@@ -128,7 +128,9 @@ export function countFilingsInMonth(
   receipts: FilingReceipt[],
   date: Date = new Date(),
 ): number {
-  const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  // Receipts store `filedAt` as an ISO UTC timestamp and the server enforces
+  // filing months in UTC, so use the same period here (M039/M057).
+  const yearMonth = date.toISOString().slice(0, 7);
   return receipts.filter((receipt) => receipt.filedAt.slice(0, 7) === yearMonth)
     .length;
 }

@@ -102,6 +102,12 @@ export const URGENT_DEADLINE_SECONDS = readPositiveInt(
 );
 export const DEMO_SLA_SECONDS = readOptionalPositiveInt('DEMO_SLA_SECONDS');
 
+// How long old Merkle roots stay valid after a new root is published.
+export const ENROLLMENT_GRACE_DAYS = readPositiveInt(
+  'ENROLLMENT_GRACE_DAYS',
+  14,
+);
+
 export const SUPPORT_ALERT_THRESHOLD = readPositiveInt('SUPPORT_ALERT_THRESHOLD', 10);
 
 export const MIN_GROUP_SIZE = readPositiveInt('MIN_GROUP_SIZE', 5);

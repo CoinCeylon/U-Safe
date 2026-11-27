@@ -174,6 +174,20 @@ export async function fetchUniversities(): Promise<UniversityOption[]> {
 // Step 1: university + email + privacy explanation
 // ---------------------------------------------------------------------------
 
+export const PRIVACY_NOTICE_HEADING =
+  'What the university can and cannot see';
+
+// Student-facing copy must match specification section 7.3: the university and
+// the UGC can read complaint text and evidence; other students can read text
+// only; nobody can link a complaint to the student's identity.
+export const PRIVACY_NOTICE_LINES = [
+  'The university can read the complaint text and evidence you submit, so avoid details that identify you.',
+  'Other students at your university can read complaint text, but not evidence. The UGC can read both.',
+  'The university cannot link a complaint, a support action or a wallet address to you. Your email is used only for the enrolment code and stored as a hash.',
+  'If you say a staff member is involved, only the UGC can read the details and evidence.',
+  'Because the server delivers the community key, the server operator could also decrypt complaint text. It cannot decrypt evidence or UGC-only staff cases.',
+] as const;
+
 function privacyNotice(): HTMLDivElement {
   const box = document.createElement('div');
   box.className =
@@ -181,17 +195,11 @@ function privacyNotice(): HTMLDivElement {
 
   const heading = document.createElement('p');
   heading.className = 'font-semibold mb-1';
-  heading.textContent = 'What the university can and cannot see';
-
-  const lines = [
-    'The university can see that you enrolled and the number of complaints filed.',
-    'The university cannot see your complaint text, your evidence, or your identity.',
-    'Your email is used only to send the enrolment code and is stored as a hash.',
-  ];
+  heading.textContent = PRIVACY_NOTICE_HEADING;
 
   const list = document.createElement('ul');
   list.className = 'list-disc list-inside mt-1 space-y-1 text-sm';
-  for (const text of lines) {
+  for (const text of PRIVACY_NOTICE_LINES) {
     const item = document.createElement('li');
     item.textContent = text;
     list.append(item);

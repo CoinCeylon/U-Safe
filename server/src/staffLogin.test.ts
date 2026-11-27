@@ -16,6 +16,7 @@ const config: Config = {
   WEB_ORIGIN: 'http://localhost:5173',
   DATABASE_PATH: ':memory:',
   EMAIL_HASH_SALT: 'test-salt',
+  COMMUNITY_DELIVERY_SECRET: 'delivery-secret',
   MAIL_MODE: 'dev',
   SMTP_HOST: '',
   SMTP_PORT: 587,
@@ -171,5 +172,12 @@ describe('M063 dev login routes', () => {
       payload: { staffId: registrarId },
     });
     expect(login.statusCode).toBe(404);
+
+    const publish = await app.inject({
+      method: 'POST',
+      url: '/api/events/publish',
+      payload: { type: 'test.event', id: 'e1' },
+    });
+    expect(publish.statusCode).toBe(404);
   });
 });

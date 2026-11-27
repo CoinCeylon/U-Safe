@@ -93,9 +93,9 @@ describe('filing receipts (M061)', () => {
       makeReceipt('nov-2', '2026-11-25T10:00:00.000Z'),
       makeReceipt('oct', '2026-10-31T10:00:00.000Z'),
     ];
-    expect(countFilingsInMonth(receipts, new Date(2026, 10, 25))).toBe(2);
-    expect(countFilingsInMonth(receipts, new Date(2026, 11, 1))).toBe(0);
-    expect(countFilingsInMonth([], new Date(2026, 10, 25))).toBe(0);
+    expect(countFilingsInMonth(receipts, new Date(Date.UTC(2026, 10, 25)))).toBe(2);
+    expect(countFilingsInMonth(receipts, new Date(Date.UTC(2026, 11, 1)))).toBe(0);
+    expect(countFilingsInMonth([], new Date(Date.UTC(2026, 10, 25)))).toBe(0);
   });
 
   it('sorts receipts newest first', () => {

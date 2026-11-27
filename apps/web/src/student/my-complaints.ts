@@ -1,11 +1,11 @@
 // Student "My complaints" page (M061).
 //
 // Lists the complaints this browser has filed, from the encrypted local
-// receipts only. Nothing on this page is ever sent to the server: statuses
-// refresh through the same public, proof-less complaint endpoint the feed
-// and detail pages use, and evidence re-downloads read blobs by their
-// public hash. The list itself lives in SecureStore (IndexedDB, encrypted
-// with the student secret).
+// receipts only. The receipt list and descriptions never leave the browser.
+// Status refresh requests carry only public complaint ids; evidence downloads
+// request only public blob hashes. Neither request attaches a student identity.
+// The list itself lives in SecureStore (IndexedDB, encrypted with the student
+// secret).
 //
 // Clearing site data removes the receipts permanently. Restoring the wallet
 // does NOT bring them back, because IndexedDB is gone — the page says so.

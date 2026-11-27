@@ -17,6 +17,7 @@ const config: Config = {
   WEB_ORIGIN: 'http://localhost:5173',
   DATABASE_PATH: ':memory:',
   EMAIL_HASH_SALT: 'test-salt',
+  COMMUNITY_DELIVERY_SECRET: 'delivery-secret',
   MAIL_MODE: 'dev',
   SMTP_HOST: '',
   SMTP_PORT: 587,
@@ -35,6 +36,7 @@ describe('M064 PUT /api/university/:id/public-key', () => {
   let db: Database.Database;
   let app: FastifyInstance | undefined;
   let staffToken: string;
+  let investigatorToken: string;
   let otherUniversityToken: string;
 
   beforeEach(() => {
@@ -53,14 +55,21 @@ describe('M064 PUT /api/university/:id/public-key', () => {
     const staffId = db
       .prepare(
         `INSERT INTO staff (university_id, role, address, public_key_jwk)
-         VALUES ('uni-1', 'investigator', 'staff-1', NULL)`,
+         VALUES ('uni-1', 'admin', 'staff-1', NULL)`,
       )
       .run().lastInsertRowid;
     staffToken = issueSession(db, Number(staffId));
+    const investigatorId = db
+      .prepare(
+        `INSERT INTO staff (university_id, role, address, public_key_jwk)
+         VALUES ('uni-1', 'investigator', 'staff-investigator', NULL)`,
+      )
+      .run().lastInsertRowid;
+    investigatorToken = issueSession(db, Number(investigatorId));
     const otherStaffId = db
       .prepare(
         `INSERT INTO staff (university_id, role, address, public_key_jwk)
-         VALUES ('uni-2', 'investigator', 'staff-2', NULL)`,
+         VALUES ('uni-2', 'admin', 'staff-2', NULL)`,
       )
       .run().lastInsertRowid;
     otherUniversityToken = issueSession(db, Number(otherStaffId));
@@ -87,6 +96,17 @@ describe('M064 PUT /api/university/:id/public-key', () => {
       .prepare('SELECT public_key_jwk FROM universities WHERE id = ?')
       .get('uni-1') as { public_key_jwk: string };
     expect(stored.public_key_jwk).toBe(validPublicKeyJwk);
+  });
+
+  it('rejects non-admin staff with 403', async () => {
+    app = await buildApp(config, db);
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/university/uni-1/public-key',
+      headers: { authorization: `Bearer ${investigatorToken}` },
+      payload: { publicKeyJwk: validPublicKeyJwk },
+    });
+    expect(response.statusCode).toBe(403);
   });
 
   it('rejects staff of another university with 403', async () => {

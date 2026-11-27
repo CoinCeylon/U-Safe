@@ -156,7 +156,9 @@ export interface SubmissionResult {
 
 /** "YYYY-MM" for the filing nullifier's year-month binding. */
 export function formatYearMonth(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  // UTC keeps the browser period aligned with the server's enforcement of the
+  // current month (M039), even around a local midnight/month boundary.
+  return date.toISOString().slice(0, 7);
 }
 
 /**
@@ -382,6 +384,7 @@ export class SubmissionPipeline {
         const result = await action((detail) =>
           onProgress({ id, phase: 'active', detail }),
         );
+        onProgress({ id, phase: 'done', detail: '' });
         return result;
       } catch (error) {
         // The monthly limit is a friendly outcome, not a failed step.
@@ -440,6 +443,15 @@ export class SubmissionPipeline {
     if (this.manifest === null) {
       await step('keys', async () => {
         const university = await this.fetchUniversity();
+        if (
+          !this.input.staffInvolved &&
+          this.encrypted.size > 0 &&
+          university.publicKeyJwk === null
+        ) {
+          throw new Error(
+            'The university has not registered its encryption key yet, so it could not read your evidence. Ask the university administrator to finish key setup and try again.',
+          );
+        }
         const ugcJwk = await this.fetchUgcJwk();
         const ugcPublicKey = await importPublicKeyJwk(ugcJwk);
         const universityPublicKey =
@@ -554,7 +566,16 @@ export class SubmissionPipeline {
           if (!message.includes('filing nullifier already used')) {
             throw error;
           }
-          // This monthly slot is already used; try the other one.
+          // The slot may be ours from a lost response (the ledger accepted the
+          // filing but the reply never arrived). Look for a complaint with our
+          // exact sealed payload hash before burning the other slot.
+          const existing = await this.findComplaintByPayloadHash(
+            payloadBlob.blobHash,
+          );
+          if (existing !== null) {
+            return existing;
+          }
+          // This monthly slot belongs to a different filing; try the other one.
         }
       }
       throw new FilingLimitError();
@@ -595,6 +616,30 @@ export class SubmissionPipeline {
     });
 
     return { complaintId, receipt };
+  }
+
+  /**
+   * Looks for a complaint this pipeline may already have created. A network
+   * error after the ledger accepted the filing leaves the client without an id;
+   * on retry the same filing nullifier is rejected, so matching the sealed
+   * payload hash is the only safe way to recover the id without filing twice.
+   */
+  private async findComplaintByPayloadHash(
+    payloadHash: string,
+  ): Promise<string | null> {
+    const response = await this.fetchImpl(
+      `/api/complaints?university=${encodeURIComponent(this.input.universityId)}`,
+    );
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as {
+      complaints?: Array<{ id?: unknown; payloadHash?: unknown }>;
+    };
+    const match = payload.complaints?.find(
+      (complaint) => complaint.payloadHash === payloadHash,
+    );
+    return typeof match?.id === 'string' ? match.id : null;
   }
 
   private async fetchUniversity(): Promise<{

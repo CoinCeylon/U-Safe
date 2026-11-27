@@ -45,6 +45,24 @@ router.register('/', () => {
     'U-Safe helps students file anonymous ragging complaints at their university. Your identity is never stored together with your complaint. Choose a portal below to get started.';
   section.append(intro);
 
+  const health = document.createElement('p');
+  health.className = 'text-xs text-slate-500';
+  health.textContent = 'Checking server status…';
+  section.append(health);
+  void fetch('/api/health')
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`health ${response.status}`);
+      }
+      const data = (await response.json()) as { ok?: boolean; mode?: string };
+      health.textContent =
+        `Server: ${data.ok === true ? 'online' : 'unavailable'} · ` +
+        `mode: ${typeof data.mode === 'string' ? data.mode : 'unknown'}`;
+    })
+    .catch(() => {
+      health.textContent = 'Server status unavailable.';
+    });
+
   const portals = [
     {
       label: 'Student Portal',

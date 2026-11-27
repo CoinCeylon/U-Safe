@@ -4,8 +4,13 @@ import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type Database from 'better-sqlite3';
+import { MAX_EVIDENCE_FILE_BYTES } from '@usafe/shared';
 
-export const MAX_BLOB_SIZE = 25 * 1024 * 1024;
+// A 25 MB evidence file gains a small framed envelope, IVs and GCM tags. The
+// blob store accepts one extra megabyte so a maximum-size evidence file still
+// fits after encryption (M058/M060); the later hardening milestone uses the
+// same 26 MB blob limit.
+export const MAX_BLOB_SIZE = MAX_EVIDENCE_FILE_BYTES + 1024 * 1024;
 
 const SERVICE_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BLOB_DIR = path.resolve(SERVICE_DIR, '..', '..', 'data', 'blobs');

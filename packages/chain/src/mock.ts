@@ -11,6 +11,7 @@ import {
 import {
   CATEGORIES,
   DEMO_SLA_SECONDS,
+  ENROLLMENT_GRACE_DAYS,
   MIN_GROUP_SIZE,
   NORMAL_DEADLINE_SECONDS,
   STATUSES,
@@ -54,8 +55,6 @@ import type {
 } from '@usafe/shared';
 import { LedgerAdapter, LedgerAuthorizationError } from './ledger.js';
 
-const GRACE_WINDOW_DAYS = 14;
-
 const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
 
 type TreeEntry = {
@@ -78,6 +77,7 @@ type ComplaintRow = {
   reopened: number;
   support_count: number;
   outcome_hash: string | null;
+  outcome_locator: string | null;
   last_updated_at: string;
 };
 
@@ -222,7 +222,7 @@ export class MockLedger implements LedgerAdapter {
       .prepare(
         `SELECT root, created_at FROM ml_roots
          WHERE university_id = ?
-         ORDER BY created_at DESC`,
+         ORDER BY created_at DESC, rowid DESC`,
       )
       .all(input.universityId) as Array<{ root: string; created_at: string }>;
 
@@ -233,16 +233,19 @@ export class MockLedger implements LedgerAdapter {
       rows.length > 0 ? rows[0]!.root : zeroRoot;
 
     const cutoff = new Date(
-      Date.now() - GRACE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+      Date.now() - ENROLLMENT_GRACE_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const roots = rows.filter((row) => row.created_at >= cutoff);
+    const recentRoots = rows.filter((row) => row.created_at >= cutoff);
 
+    // The current root is always valid, even when the university has had no
+    // new enrollment for longer than the grace window (M037). Without this,
+    // every existing student would be locked out after 14 quiet days.
     const seen = new Set<string>();
     const deduped: string[] = [];
-    for (const row of roots) {
-      if (!seen.has(row.root)) {
-        seen.add(row.root);
-        deduped.push(row.root);
+    for (const root of [currentRoot, ...recentRoots.map((row) => row.root)]) {
+      if (!seen.has(root)) {
+        seen.add(root);
+        deduped.push(root);
       }
     }
 
@@ -324,6 +327,15 @@ export class MockLedger implements LedgerAdapter {
     const slot = Number(contextParts[2]);
     if (slot !== 0 && slot !== 1) {
       throw new Error('filing slot must be 0 or 1');
+    }
+
+    // The month is part of the nullifier input, so the server must enforce it
+    // rather than trusting the client. Without this check a caller could file
+    // against arbitrary historical/future months and bypass the monthly limit.
+    const yearMonth = contextParts[1];
+    const currentYearMonth = new Date().toISOString().slice(0, 7);
+    if (yearMonth === undefined || yearMonth !== currentYearMonth) {
+      throw new Error('filing context month is not the current month');
     }
 
     // 4. With only two slots (0 and 1) per year-month, a third filing would
@@ -533,14 +545,18 @@ export class MockLedger implements LedgerAdapter {
     //    off-chain as a sealed blob by the portal).
     const now = new Date().toISOString();
     const outcomeHash = next === 'finished' ? input.outcomeHash : null;
+    const outcomeLocator =
+      next === 'finished'
+        ? (input.outcomeLocator ?? input.outcomeHash)
+        : null;
     const transaction = this.db.transaction(() => {
       this.db
         .prepare(
           `UPDATE ml_complaints
-           SET status = ?, outcome_hash = ?, last_updated_at = ?
+           SET status = ?, outcome_hash = ?, outcome_locator = ?, last_updated_at = ?
            WHERE id = ?`,
         )
-        .run(next, outcomeHash, now, input.complaintId);
+        .run(next, outcomeHash, outcomeLocator, now, input.complaintId);
       this.db
         .prepare(
           `INSERT INTO ml_history (complaint_id, status, at, actor_role, note_hash)
@@ -644,7 +660,7 @@ export class MockLedger implements LedgerAdapter {
       .prepare(
         `SELECT id, university_id, category, urgency, staff_involved, owner_role,
                 payload_hash, created_at, deadline_at, status, escalated, reopened,
-                support_count, outcome_hash, last_updated_at
+                support_count, outcome_hash, outcome_locator, last_updated_at
          FROM ml_complaints
          ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
          ORDER BY created_at DESC, id DESC`,
@@ -826,7 +842,7 @@ export class MockLedger implements LedgerAdapter {
       .prepare(
         `SELECT id, university_id, category, urgency, staff_involved, owner_role,
                 payload_hash, created_at, deadline_at, status, escalated, reopened,
-                support_count, outcome_hash, last_updated_at
+                support_count, outcome_hash, outcome_locator, last_updated_at
          FROM ml_complaints WHERE id = ?`,
       )
       .get(complaintId) as ComplaintRow | undefined;

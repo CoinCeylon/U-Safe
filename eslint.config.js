@@ -7,6 +7,7 @@ export default tseslint.config(
     ignores: [
       'node_modules/**',
       'eslint.config.js',
+      'vitest.config.ts',
       'apps/web/*.config.js',
       '**/dist/**',
       '**/build/**',

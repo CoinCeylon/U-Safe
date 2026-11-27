@@ -199,6 +199,8 @@ export interface UpdateStatusInput {
   complaintId: string;
   newStatus: Status;
   outcomeHash: string | null;
+  /** Off-chain blob locator for the sealed outcome (M041/M068). */
+  outcomeLocator?: string | null;
   ownerRole: 'university' | 'ugc';
 }
 
@@ -212,6 +214,7 @@ export const updateStatusInputSchema = z
     complaintId: z.string().min(1),
     newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
     outcomeHash: z.string().nullable(),
+    outcomeLocator: z.string().min(1).nullable().optional(),
     ownerRole: z.enum(['university', 'ugc']),
   })
   .strict() satisfies z.ZodType<UpdateStatusInput>;

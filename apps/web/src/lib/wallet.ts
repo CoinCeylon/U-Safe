@@ -54,7 +54,10 @@ export const connectWallet = async (
     getAddress: () => wallet.getChangeAddress(),
     signMessage: async (message: string) => {
       const address = await wallet.getChangeAddress();
-      return wallet.signData(address, message);
+      // Mesh's BrowserWallet.signData signature is (payload, address?), not
+      // (address, payload). Passing the address first makes CIP-8 login sign
+      // the address as the payload and fails verification.
+      return wallet.signData(message, address);
     },
   };
 };

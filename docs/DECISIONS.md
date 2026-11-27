@@ -13,7 +13,7 @@ Record package names, versions and adaptations here.
   `browserWallet.signData(payload, address?)` returning `DataSignature { signature, key }`,
   and `browserWallet.getUsedAddresses()`. Lace wallet name is `lace`; install URL
   is `https://lace.dev/`.
-- Mail: `nodemailer` ^6.9.16 with `@types/nodemailer` ^8.0.2; `MAIL_MODE=dev|smtp`
+- Mail: `nodemailer` ^10.6.1 with `@types/nodemailer` ^8.0.2; `MAIL_MODE=dev|smtp`
   selects `ConsoleMailer` or `SmtpMailer`. Dev messages go to `server/.dev-mailbox/`,
   which is git-ignored; the console prints only the OTP code and file path, never the
   recipient address.
@@ -171,10 +171,11 @@ Record package names, versions and adaptations here.
   M067 can decrypt streamed, chunk by chunk.
 - The submission pipeline (`apps/web/src/student/submit.ts`) keeps encrypted artifacts
   and uploaded blob hashes per pipeline instance, so a retry resumes from the failed step
-  and never re-uploads a blob. Known edge case, accepted for mock mode: if the filing
-  request reaches the ledger but the response is lost, a retry burns the second monthly
-  slot and can create a second complaint, because the client cannot know the first
-  filing succeeded. The two-slot monthly limit still prevents a third copy.
+  and never re-uploads a blob. If the filing request reaches the ledger but the response
+  is lost, the retry sees `filing nullifier already used` and searches
+  `GET /api/complaints?university=` for a complaint with the same sealed payload hash.
+  Finding it recovers that complaint id instead of burning the second monthly slot; only
+  a different filing falls through to slot 1.
 - Filing receipts are stored through `SecureStore` (IndexedDB, encrypted with the
   student secret) in `apps/web/src/student/filings.ts`; M061 builds the "My complaints"
   page on top of them. Non-staff-involved filed descriptions also feed the M059
@@ -420,3 +421,66 @@ fixing agent did not commit anything; all changes are left for human review.
   complaints must stay readable. The browser keeps its encrypted backup in the
   `usafe-university` IndexedDB database under `communityKeyBackup:<id>` and can
   re-download it.
+- M065 API shape: `GET /api/university/:id/community-key` returns
+  `ugcPublicKeyJwk` as the stored JSON text because the admin screen parses it
+  before wrapping, while `GET /api/ugc/public-key` returns the parsed JWK object
+  used by the student submission pipeline. Both routes read the same single
+  `getUgcPublicKeyJwk` helper. `npm run seed:keys` now also backfills
+  `community_key_created_at` and `community_key_academic_year` so a seeded key is
+  shown as current on the M065 screen.
+- M039: the filing year-month is now enforced server-side and uses **UTC**
+  everywhere (`formatYearMonth` in the submission pipeline,
+  `countFilingsInMonth` for the local slots display, and the mock ledger's
+  current-month check). A proof context such as `file|1999-01|0` is rejected.
+  This keeps the browser's period identical to the server's even on a local
+  month boundary.
+- M050/M063: Mesh's `BrowserWallet.getInstalledWallets()` returns both the
+  stable CIP-30 `id` and a display `name`; Lace's display name is `Lace`, so
+  detection uses `id === 'lace'`. Mesh's `BrowserWallet.signData` signature is
+  `signData(payload, address?)`; the shared university module now calls it in
+  that order so the CIP-8 challenge, not the address, is the signed payload.
+- M049: the onboarding privacy notice now matches specification section 7.3 and
+  the M062 help page: the university and UGC can read complaint text and
+  evidence, other students can read text only, staff-involved details are
+  UGC-only, and no complaint/support/wallet action is linked to the student's
+  identity. The copy is exported and covered by a unit test.
+- M058: image stripping is asynchronous, so the file form keeps a set of
+  in-flight strip promises. Submitting disables the button and awaits every
+  pending strip before reading `items[].file`; the same promise updates the
+  preview, the warning/acknowledgement state and the displayed size. This
+  guarantees the pipeline receives the stripped file, never the original
+  EXIF/GPS-bearing one.
+- Vitest runs with `testTimeout` and `hookTimeout` of 120 seconds, one worker
+  and `fileParallelism: false` (`vitest.config.ts`). The crypto suites hash and
+  encrypt multi-megabyte buffers; parallel workers and the default 5-second
+  timeout were timing out on a loaded machine even though the tests pass in
+  isolation. `vitest.config.ts` is excluded from ESLint's type-aware parser
+  because it sits outside any workspace tsconfig.
+- M060: a normal complaint that carries evidence must have the university's
+  registered RSA public key, because every per-file key must be wrapped for the
+  university. If the key is missing the `keys` step now throws a clear message
+  and no complaint is filed. Complaints without evidence and staff-involved
+  complaints (UGC-only wrapping) are unaffected.
+- M056: `postSupport` treats only the server's exact
+  `support nullifier already used` message as a quiet duplicate. Any other
+  non-2xx response (invalid proof, wrong university, malformed context) is a
+  normal error, so the UI no longer marks an invalid support as successful.
+- M059: the file form attempts to decrypt open community complaints with the
+  community key when the student is unlocked and enrolled, caches each text,
+  and falls back to the local cache when the key or network is unavailable.
+  Finished and UGC-owned complaints never enter the suggestion corpus.
+- M033: `/api/events/publish` exists only when `DEV_LOGIN=true`; it is a
+  human-test helper, not a production broadcast endpoint. The read-only SSE
+  `/api/events` stream remains public and carries only ids and event types.
+- M041: `ml_complaints.outcome_locator` stores the off-chain outcome blob
+  locator. `updateStatus` accepts an optional locator and falls back to the
+  outcome hash, so M068 can pass the sealed blob hash either way.
+- M008/M009: `DB_PATH` is accepted as an alias for `DATABASE_PATH`, and the
+  migration sequence is now 001–007 (the previous duplicate 005 files are
+  005_community_key_meta, 006_complaint_sequence and 007_outcome_locator).
+- M060 retry: after a lost response, the retry looks for the same sealed
+  payload hash in the public university complaint list and reuses that id.
+  It only tries slot 1 when the used slot belongs to a different filing.
+- Blob size: `MAX_BLOB_SIZE` is 26 MB, one megabyte above the 25 MB plaintext
+  evidence limit, so encrypted framing/IV/tag overhead cannot reject a valid
+  maximum-size file.

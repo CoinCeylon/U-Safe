@@ -1,9 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeWallet } from './wallet';
+import { FakeWallet, isLaceWallet } from './wallet';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
+});
+
+describe('Lace wallet detection (M050)', () => {
+  it('matches the CIP-30 id, not the capitalised display name', () => {
+    expect(isLaceWallet({ id: 'lace' })).toBe(true);
+    expect(isLaceWallet({ id: 'eternl' })).toBe(false);
+    // The display name is "Lace"; matching it case-sensitively must not count.
+    expect(isLaceWallet({ id: 'Lace' })).toBe(false);
+  });
 });
 
 describe('FakeWallet (development only)', () => {

@@ -163,7 +163,8 @@ const main = async (): Promise<void> => {
   const baseUrl = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
   const universityId = process.env.DEMO_UNIVERSITY_ID ?? 'moratuwa';
   const baseDir = process.env.INIT_CWD ?? process.cwd();
-  const configuredDatabasePath = process.env.DATABASE_PATH;
+  const configuredDatabasePath =
+    process.env.DATABASE_PATH ?? process.env.DB_PATH;
   const databasePath =
     configuredDatabasePath === undefined
       ? resolve(baseDir, 'server/data/usafe.db')

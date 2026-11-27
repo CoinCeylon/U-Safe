@@ -13,6 +13,7 @@ import {
   wrapAesKeyBytes,
 } from '@usafe/crypto';
 import { openDatabase } from '../server/src/db/index.js';
+import { academicYearFor } from '../server/src/services/communityKeys.js';
 
 export const DEMO_KEY_PASSPHRASE = 'demo';
 
@@ -28,6 +29,8 @@ interface UniversityRow {
   public_key_jwk: string | null;
   community_key_wrapped_for_ugc: string | null;
   community_key_wrapped_for_delivery: string | null;
+  community_key_created_at: string | null;
+  community_key_academic_year: string | null;
 }
 
 interface StaffRow {
@@ -155,7 +158,8 @@ export const seedDemoKeys = async (
   const universities = db
     .prepare(
       `SELECT id, public_key_jwk, community_key_wrapped_for_ugc,
-              community_key_wrapped_for_delivery
+              community_key_wrapped_for_delivery,
+              community_key_created_at, community_key_academic_year
        FROM universities ORDER BY id ASC`,
     )
     .all() as UniversityRow[];
@@ -189,6 +193,7 @@ export const seedDemoKeys = async (
 
     let wrappedForUgc = university.community_key_wrapped_for_ugc;
     let wrappedForDelivery = university.community_key_wrapped_for_delivery;
+    const seededAt = new Date();
     if (communityGenerated) {
       const communityKey = generateCommunityKey();
       wrappedForUgc = encode(await wrapAesKeyBytes(communityKey, ugcPublicKey));
@@ -197,17 +202,31 @@ export const seedDemoKeys = async (
         communityDeliverySecret,
       );
     }
+    // M065 needs the creation date and academic year for the admin screen.
+    // Existing keys seeded before these columns existed get the metadata on
+    // the next run; a freshly generated key always gets the current date.
+    const keyCreatedAt = communityGenerated
+      ? seededAt.toISOString()
+      : (university.community_key_created_at ?? seededAt.toISOString());
+    const keyAcademicYear = communityGenerated
+      ? academicYearFor(seededAt)
+      : (university.community_key_academic_year ??
+        academicYearFor(new Date(keyCreatedAt)));
 
     db.prepare(
       `UPDATE universities
        SET public_key_jwk = ?,
            community_key_wrapped_for_ugc = ?,
-           community_key_wrapped_for_delivery = ?
+           community_key_wrapped_for_delivery = ?,
+           community_key_created_at = ?,
+           community_key_academic_year = ?
        WHERE id = ?`,
     ).run(
       JSON.stringify(pair.publicKeyJwk),
       wrappedForUgc,
       wrappedForDelivery,
+      keyCreatedAt,
+      keyAcademicYear,
       university.id,
     );
 
@@ -231,7 +250,8 @@ const main = async (): Promise<void> => {
 
   const baseDir = process.env.INIT_CWD ?? process.cwd();
   const outputDir = resolve(baseDir, process.env.DEV_KEYS_DIR ?? '.dev-keys');
-  const configuredDatabasePath = process.env.DATABASE_PATH;
+  const configuredDatabasePath =
+    process.env.DATABASE_PATH ?? process.env.DB_PATH;
   const databasePath =
     configuredDatabasePath === undefined
       ? resolve(baseDir, 'server/data/usafe.db')
