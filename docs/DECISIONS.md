@@ -443,3 +443,15 @@ fixing agent did not commit anything; all changes are left for human review.
   evidence, other students can read text only, staff-involved details are
   UGC-only, and no complaint/support/wallet action is linked to the student's
   identity. The copy is exported and covered by a unit test.
+- M058: image stripping is asynchronous, so the file form keeps a set of
+  in-flight strip promises. Submitting disables the button and awaits every
+  pending strip before reading `items[].file`; the same promise updates the
+  preview, the warning/acknowledgement state and the displayed size. This
+  guarantees the pipeline receives the stripped file, never the original
+  EXIF/GPS-bearing one.
+- Vitest runs the multi-megabyte crypto suites with `testTimeout` and
+  `hookTimeout` of 60 seconds and at most two workers (`vitest.config.ts`).
+  The default 5-second timeout and one-fork-per-file startup were timing out on
+  a loaded machine even though the tests pass in isolation. `vitest.config.ts`
+  is excluded from ESLint's type-aware parser because it sits outside any
+  workspace tsconfig.

@@ -235,7 +235,7 @@ describe('encryptFile / decryptFile', () => {
       offset += part.length;
     }
     expect(decrypted).toEqual(expected);
-  });
+  }, 30_000);
 
   it('fails when one chunk byte is flipped', async () => {
     const size = 5 * 1024 * 1024;
@@ -349,7 +349,7 @@ describe('encryptFile / decryptFile', () => {
 
     const decrypted = await decryptFile(manualChunks, knownKey, file.size);
     expect(decrypted).toEqual(contents);
-  });
+  }, 30_000);
 
   it('encryptFile produces the right number of chunks for a multi-chunk file', async () => {
     // 2.5 MB -> 3 chunks

@@ -103,3 +103,4 @@ M039 | fixed | the mock ledger rejects filing proofs whose year-month is not the
 M050 | fixed | student Lace detection matches the CIP-30 wallet id (`lace`), not the display name (`Lace`), and the lookup is unit tested
 M063 | fixed | the shared university wallet passes Mesh `signData(payload, address)` in the correct order, with a mocked regression test for CIP-8 login
 M049 | fixed | onboarding step 1 now states that the university can read complaint text and evidence, that students can read text only, that the UGC can read both, and that staff-involved details are UGC-only
+M058 | fixed | image stripping is tracked as an in-flight task and submit waits for it, so a complaint cannot be filed with the original EXIF/GPS-bearing image

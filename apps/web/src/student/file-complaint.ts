@@ -320,6 +320,9 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
   acknowledgeRow.append(acknowledge, acknowledgeLabel);
 
   const items: EvidenceItem[] = [];
+  // Image stripping is asynchronous. Track every in-flight strip so submit
+  // can wait for it instead of uploading the original file with metadata.
+  const pendingStrips = new Set<Promise<void>>();
 
   function showErrors(rejections: EvidenceRejection[]): void {
     errors.replaceChildren();
@@ -393,29 +396,52 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
     updateEvidenceState();
 
     if (kind === 'image') {
-      void prepareEvidenceFile(file).then(({ file: strippedFile, stripped }) => {
-        if (!items.includes(item)) {
-          return;
-        }
-        item.file = strippedFile;
-        if (stripped && item.previewUrl !== null && preview.element instanceof HTMLImageElement) {
-          URL.revokeObjectURL(item.previewUrl);
-          item.previewUrl = URL.createObjectURL(strippedFile);
-          preview.element.src = item.previewUrl;
-        } else if (!stripped && !item.warning) {
-          // stripImage can fail for a corrupt image. It stays attached, but the
-          // student must acknowledge that its metadata was not removed.
-          item.warning = true;
-          const note = document.createElement('p');
-          note.className = 'text-xs text-warning';
-          note.textContent = 'Metadata could not be removed from this file.';
-          info.append(note);
-          updateEvidenceState();
-        }
-        detail.textContent = stripped
-          ? `${formatBytes(strippedFile.size)} · metadata stripped`
-          : formatBytes(strippedFile.size);
-      });
+      const stripTask = prepareEvidenceFile(file)
+        .then(({ file: strippedFile, stripped }) => {
+          if (!items.includes(item)) {
+            return;
+          }
+          item.file = strippedFile;
+          if (
+            stripped &&
+            item.previewUrl !== null &&
+            preview.element instanceof HTMLImageElement
+          ) {
+            URL.revokeObjectURL(item.previewUrl);
+            item.previewUrl = URL.createObjectURL(strippedFile);
+            preview.element.src = item.previewUrl;
+          } else if (!stripped && !item.warning) {
+            // stripImage can fail for a corrupt image. It stays attached, but
+            // the student must acknowledge that its metadata was not removed.
+            item.warning = true;
+            const note = document.createElement('p');
+            note.className = 'text-xs text-warning';
+            note.textContent = 'Metadata could not be removed from this file.';
+            info.append(note);
+            updateEvidenceState();
+          }
+          detail.textContent = stripped
+            ? `${formatBytes(strippedFile.size)} · metadata stripped`
+            : formatBytes(strippedFile.size);
+        })
+        .catch(() => {
+          if (!items.includes(item)) {
+            return;
+          }
+          if (!item.warning) {
+            item.warning = true;
+            const note = document.createElement('p');
+            note.className = 'text-xs text-warning';
+            note.textContent = 'Metadata could not be removed from this file.';
+            info.append(note);
+            updateEvidenceState();
+          }
+          detail.textContent = formatBytes(file.size);
+        })
+        .finally(() => {
+          pendingStrips.delete(stripTask);
+        });
+      pendingStrips.add(stripTask);
     }
   }
 
@@ -466,8 +492,19 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
       });
   }
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
+  const handleSubmit = async (): Promise<void> => {
+    // A disabled submit button also blocks a second Enter-key submission while
+    // image stripping is still running.
+    if (submit.disabled) {
+      return;
+    }
+    if (pendingStrips.size > 0) {
+      submit.disabled = true;
+      submit.textContent = 'Preparing images…';
+      await Promise.all([...pendingStrips]);
+      submit.textContent = 'Submit complaint';
+      submit.disabled = slotsLeft === 0;
+    }
     // One final comparison before the submit step continues (M059), so a
     // suggestion that arrived with the corpus load is never missed.
     updateSuggestions();
@@ -508,6 +545,11 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
     // captured, so the form itself can go.
     form.remove();
     renderSubmissionFlow(section, input);
+  };
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void handleSubmit();
   });
 
   updateEvidenceState();
