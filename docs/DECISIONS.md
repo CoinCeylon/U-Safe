@@ -450,12 +450,12 @@ fixing agent did not commit anything; all changes are left for human review.
   preview, the warning/acknowledgement state and the displayed size. This
   guarantees the pipeline receives the stripped file, never the original
   EXIF/GPS-bearing one.
-- Vitest runs the multi-megabyte crypto suites with `testTimeout` and
-  `hookTimeout` of 60 seconds and at most two workers (`vitest.config.ts`).
-  The default 5-second timeout and one-fork-per-file startup were timing out on
-  a loaded machine even though the tests pass in isolation. `vitest.config.ts`
-  is excluded from ESLint's type-aware parser because it sits outside any
-  workspace tsconfig.
+- Vitest runs with `testTimeout` and `hookTimeout` of 120 seconds, one worker
+  and `fileParallelism: false` (`vitest.config.ts`). The crypto suites hash and
+  encrypt multi-megabyte buffers; parallel workers and the default 5-second
+  timeout were timing out on a loaded machine even though the tests pass in
+  isolation. `vitest.config.ts` is excluded from ESLint's type-aware parser
+  because it sits outside any workspace tsconfig.
 - M060: a normal complaint that carries evidence must have the university's
   registered RSA public key, because every per-file key must be wrapped for the
   university. If the key is missing the `keys` step now throws a clear message

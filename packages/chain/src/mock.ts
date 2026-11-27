@@ -222,7 +222,7 @@ export class MockLedger implements LedgerAdapter {
       .prepare(
         `SELECT root, created_at FROM ml_roots
          WHERE university_id = ?
-         ORDER BY created_at DESC`,
+         ORDER BY created_at DESC, rowid DESC`,
       )
       .all(input.universityId) as Array<{ root: string; created_at: string }>;
 
