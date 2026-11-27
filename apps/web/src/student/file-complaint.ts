@@ -41,6 +41,7 @@ import {
   SUBMIT_STEPS,
   StepError,
   SubmissionPipeline,
+  getCommunityKey,
   type StepProgress,
   type SubmissionInput,
   type SubmitStepId,
@@ -152,10 +153,30 @@ export function renderFileComplaintForm(outlet: HTMLElement): void {
   let openTexts: OpenComplaintText[] = [];
   const rememberedUniversity = getRememberedUniversity();
   if (rememberedUniversity !== null) {
-    void loadOpenComplaintTexts(rememberedUniversity).then((texts) => {
-      openTexts = texts;
+    void (async () => {
+      let communityKey: Uint8Array | null = null;
+      const secret = getStudentSecret();
+      if (secret !== null) {
+        try {
+          const credential =
+            getCachedCredential() ?? (await refreshCredential(rememberedUniversity));
+          communityKey = await getCommunityKey(
+            fetch,
+            secret,
+            rememberedUniversity,
+            credential,
+          );
+        } catch {
+          // Not enrolled/unlocked or the key is unavailable; fall back to the
+          // locally cached texts so the form still works.
+          communityKey = null;
+        }
+      }
+      openTexts = await loadOpenComplaintTexts(rememberedUniversity, {
+        communityKey,
+      });
       updateSuggestions();
-    });
+    })();
   }
 
   function updateSuggestions(): void {

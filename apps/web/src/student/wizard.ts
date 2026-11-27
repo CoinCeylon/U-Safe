@@ -185,6 +185,7 @@ export const PRIVACY_NOTICE_LINES = [
   'Other students at your university can read complaint text, but not evidence. The UGC can read both.',
   'The university cannot link a complaint, a support action or a wallet address to you. Your email is used only for the enrolment code and stored as a hash.',
   'If you say a staff member is involved, only the UGC can read the details and evidence.',
+  'Because the server delivers the community key, the server operator could also decrypt complaint text. It cannot decrypt evidence or UGC-only staff cases.',
 ] as const;
 
 function privacyNotice(): HTMLDivElement {

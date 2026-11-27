@@ -8,6 +8,9 @@ const envSchema = z.object({
   CHAIN_MODE: z.enum(['mock', 'testnet']).default('mock'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   DATABASE_PATH: z.string().default('./data/usafe.db'),
+  // Roadmap section 14 calls this DB_PATH; accept it as an alias while the
+  // existing DATABASE_PATH environment variable keeps working.
+  DB_PATH: z.string().optional(),
   EMAIL_HASH_SALT: z.string().default('dev-email-hash-salt'),
   // Wraps each university community key for delivery to newly enrolled
   // students. Optional so tests and local servers without a demo key set can
@@ -23,4 +26,14 @@ const envSchema = z.object({
 
 export type Config = z.infer<typeof envSchema>;
 
-export const loadConfig = (): Config => envSchema.parse(process.env);
+export const loadConfig = (): Config => {
+  const config = envSchema.parse(process.env);
+  if (
+    process.env.DATABASE_PATH === undefined &&
+    config.DB_PATH !== undefined &&
+    config.DB_PATH !== ''
+  ) {
+    return { ...config, DATABASE_PATH: config.DB_PATH };
+  }
+  return config;
+};

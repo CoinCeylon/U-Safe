@@ -63,6 +63,7 @@ const newDb = (): { db: Database.Database; dir: string } => {
       reopened INTEGER NOT NULL DEFAULT 0,
       support_count INTEGER NOT NULL DEFAULT 0,
       outcome_hash TEXT,
+      outcome_locator TEXT,
       last_updated_at TEXT NOT NULL,
       FOREIGN KEY (university_id) REFERENCES universities (id)
     );
@@ -1060,6 +1061,7 @@ describe('MockLedger (M037)', () => {
       complaintId,
       newStatus: 'finished',
       outcomeHash: 'outcome-hash-123',
+      outcomeLocator: 'outcome-locator-xyz',
       ownerRole: 'university',
     });
     expect(r2.status).toBe('finished');
@@ -1078,9 +1080,13 @@ describe('MockLedger (M037)', () => {
 
     // Verify outcome_hash stored
     const row = db
-      .prepare(`SELECT outcome_hash FROM ml_complaints WHERE id = ?`)
-      .get(complaintId) as { outcome_hash: string | null };
+      .prepare(`SELECT outcome_hash, outcome_locator FROM ml_complaints WHERE id = ?`)
+      .get(complaintId) as {
+      outcome_hash: string | null;
+      outcome_locator: string | null;
+    };
     expect(row.outcome_hash).toBe('outcome-hash-123');
+    expect(row.outcome_locator).toBe('outcome-locator-xyz');
 
     db.close();
     rmSync(dir, { recursive: true, force: true });

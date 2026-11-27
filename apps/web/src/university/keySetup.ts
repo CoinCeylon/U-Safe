@@ -91,6 +91,11 @@ const renderLoadedState = (
   note.textContent =
     'The private key stays in this browser tab only. Refreshing the page asks for the passphrase again.';
 
+  const registrationNote = document.createElement('p');
+  registrationNote.className = 'text-sm text-slate-600';
+  registrationNote.textContent =
+    'Only an administrator can register the university public key. Ask one to finish key setup if it is not registered yet.';
+
   const error = errorParagraph();
 
   const lockButton = button({
@@ -134,7 +139,7 @@ const renderLoadedState = (
     badge('Loaded', 'success'),
     fingerprint,
     note,
-    registerButton,
+    session.staff.role === 'admin' ? registerButton : registrationNote,
     lockButton,
     error,
   );
@@ -422,6 +427,11 @@ const renderFinishState = (
 
   const error = errorParagraph();
   const registered = document.createElement('p');
+  const canRegister = session.staff.role === 'admin';
+  const registrationNote = document.createElement('p');
+  registrationNote.className = 'text-sm text-slate-600';
+  registrationNote.textContent =
+    'The key is loaded, but only an administrator can register the university public key. Ask one to finish key setup if it is not registered yet.';
 
   const continueButton = button({
     label: 'Continue: register the public key',
@@ -458,7 +468,7 @@ const renderFinishState = (
     backupNote,
     downloadButton,
     downloadNote,
-    continueButton,
+    canRegister ? continueButton : registrationNote,
     registered,
     error,
   );

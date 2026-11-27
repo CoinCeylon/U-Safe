@@ -18,6 +18,7 @@
 // - Nothing here is ever sent to the server.
 
 import type { ComplaintText } from './similar';
+import { loadComplaintDescription } from './complaintContent';
 
 const STORAGE_PREFIX = 'usafe-complaint-text-';
 const MAX_TEXTS = 30;
@@ -34,6 +35,8 @@ export interface OpenComplaintMeta {
   status: string;
   ownerRole: string;
   supportCount: number;
+  /** Sealed payload blob hash, used to decrypt text when a key is available. */
+  payloadHash?: string;
 }
 
 /** An open, community-readable complaint with its cached description text. */
@@ -136,18 +139,26 @@ export function selectOpenComplaintTexts(
   return open;
 }
 
+export interface OpenComplaintTextOptions {
+  /** Community key, when the student is unlocked and enrolled. */
+  communityKey?: Uint8Array | null;
+  fetchImpl?: typeof fetch;
+}
+
 /**
  * Loads the comparison corpus for the duplicate check: the open complaints
- * of one university whose description text is cached in this browser.
- * The list comes from the same student endpoint the feed uses; the texts
- * come only from the local cache. Failures yield an empty corpus so the
- * form still works offline.
+ * of one university whose description text is cached in this browser. When a
+ * community key is supplied, any open community complaint without cached text
+ * is fetched from its sealed payload and decrypted in the browser first (M059).
+ * Failures yield an empty/partial corpus so the form still works offline.
  */
 export async function loadOpenComplaintTexts(
   universityId: string,
+  options: OpenComplaintTextOptions = {},
 ): Promise<OpenComplaintText[]> {
+  const fetchImpl = options.fetchImpl ?? fetch;
   try {
-    const response = await fetch(
+    const response = await fetchImpl(
       `/api/complaints?university=${encodeURIComponent(universityId)}`,
     );
     if (!response.ok) {
@@ -163,9 +174,37 @@ export async function loadOpenComplaintTexts(
           typeof (entry as OpenComplaintMeta).category === 'string' &&
           typeof (entry as OpenComplaintMeta).status === 'string' &&
           typeof (entry as OpenComplaintMeta).ownerRole === 'string' &&
-          typeof (entry as OpenComplaintMeta).supportCount === 'number',
+          typeof (entry as OpenComplaintMeta).supportCount === 'number' &&
+          ((entry as OpenComplaintMeta).payloadHash === undefined ||
+            typeof (entry as OpenComplaintMeta).payloadHash === 'string'),
       );
-    return selectOpenComplaintTexts(complaints, loadComplaintTexts(universityId));
+
+    const texts = loadComplaintTexts(universityId);
+    if (options.communityKey) {
+      for (const complaint of complaints) {
+        if (complaint.status === 'finished' || complaint.ownerRole === 'ugc') {
+          continue;
+        }
+        if (texts.some((entry) => entry.id === complaint.id)) {
+          continue;
+        }
+        if (typeof complaint.payloadHash !== 'string') {
+          continue;
+        }
+        const content = await loadComplaintDescription({
+          payloadHash: complaint.payloadHash,
+          ownerRole: complaint.ownerRole,
+          communityKey: options.communityKey,
+          fetchImpl,
+        });
+        if (content.kind === 'text') {
+          rememberComplaintText(universityId, complaint.id, content.text);
+          texts.push({ id: complaint.id, text: content.text });
+        }
+      }
+    }
+
+    return selectOpenComplaintTexts(complaints, texts);
   } catch {
     return [];
   }

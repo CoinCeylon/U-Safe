@@ -17,6 +17,7 @@ describe('M049 onboarding privacy notice', () => {
     expect(copy).toMatch(/other students .* complaint text, but not evidence/i);
     expect(copy).toMatch(/UGC can read both/i);
     expect(copy).toMatch(/only the UGC can read the details and evidence/i);
+    expect(copy).toMatch(/server operator could also decrypt complaint text/i);
   });
 
   it('keeps the identity and email promise honest', () => {

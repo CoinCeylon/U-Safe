@@ -106,3 +106,14 @@ M049 | fixed | onboarding step 1 now states that the university can read complai
 M058 | fixed | image stripping is tracked as an in-flight task and submit waits for it, so a complaint cannot be filed with the original EXIF/GPS-bearing image
 M060 | fixed | a normal complaint with evidence now fails with a clear message when the university has not registered its RSA key, instead of filing evidence the university can never decrypt
 M056 | fixed | only the exact reused-support-nullifier response is treated as a quiet duplicate; invalid proofs and other 400/409 responses surface as real errors
+M007 | fixed | the UGC portal now registers a second placeholder route (`/about`) and a matching navigation entry
+M008 | fixed | `DB_PATH` is accepted as an alias for `DATABASE_PATH`, and `.env.example` lists the demo, session, blob, grace-window and chain-test settings
+M009 | fixed | migration numbering normalized: the complaint sequence is 006 and the outcome locator is 007
+M010 | fixed | the landing page displays `/api/health` online/mode instead of only using it for the mock banner
+M033 | fixed | the event publish helper is registered only when `DEV_LOGIN=true`, so normal servers have no unauthenticated broadcast route
+M041 | fixed | the mock ledger stores an outcome blob locator (migration 007) and accepts it on status updates
+M059 | fixed | duplicate suggestions decrypt open community complaints with the community key, so they no longer depend on the student having visited the feed first
+M060 | fixed | every completed pipeline step is marked done, the 26 MB blob allowance fits an encrypted 25 MB evidence file, and a retry recovers an already-filed complaint by payload hash instead of filing twice
+M061 | fixed | the My complaints comment now distinguishes local receipts from the public complaint-id/blob-hash status and evidence requests
+M062 | fixed | the student help page and onboarding copy disclose that the server operator could decrypt complaint text through the delivered community key
+M064 | fixed | public-key registration is admin-only, and non-admin key setup explains that an administrator must register the key

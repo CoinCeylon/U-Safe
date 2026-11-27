@@ -23,6 +23,7 @@ import {
   FilingLimitError,
   StepError,
   SubmissionPipeline,
+  SUBMIT_STEPS,
   buildDeliveryProof,
   buildFileProof,
   clearCachedCommunityKey,
@@ -89,8 +90,10 @@ interface FakeServer {
   fetchImpl: typeof fetch;
   blobCalls: BlobCall[];
   complaintCalls: ComplaintCall[];
+  filedComplaints: Array<{ id: string; payloadHash: string }>;
   communityKeyCalls: number;
   complaintResponses: Array<{ status: number; error: string }>;
+  failNextComplaintResponse: boolean;
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -106,8 +109,10 @@ const makeFakeServer = (): FakeServer => {
     fetchImpl: undefined as unknown as typeof fetch,
     blobCalls: [],
     complaintCalls: [],
+    filedComplaints: [],
     communityKeyCalls: 0,
     complaintResponses: [{ status: 200, error: '' }],
+    failNextComplaintResponse: false,
   };
 
   // The pipeline always calls fetch with a string URL; JSON bodies are
@@ -173,6 +178,13 @@ const makeFakeServer = (): FakeServer => {
       );
     }
 
+    if (url.startsWith('/api/complaints?university=')) {
+      return new Response(
+        JSON.stringify({ complaints: server.filedComplaints }),
+        { status: 200 },
+      );
+    }
+
     if (url === '/api/complaints') {
       const body = JSON.parse(bodyText(init?.body)) as {
         payloadHash: string;
@@ -196,10 +208,13 @@ const makeFakeServer = (): FakeServer => {
           status: next.status,
         });
       }
-      return new Response(
-        JSON.stringify({ id: `c-${server.complaintCalls.length}` }),
-        { status: 200 },
-      );
+      const id = `c-${server.complaintCalls.length}`;
+      server.filedComplaints.push({ id, payloadHash: body.payloadHash });
+      if (server.failNextComplaintResponse) {
+        server.failNextComplaintResponse = false;
+        throw new TypeError('network connection lost after the server stored the complaint');
+      }
+      return new Response(JSON.stringify({ id }), { status: 200 });
     }
 
     return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
@@ -428,6 +443,46 @@ describe('SubmissionPipeline (M060)', () => {
     // The student's own text feeds the duplicate-suggestion cache.
     expect(localStorage.getItem(`usafe-complaint-text-${UNIVERSITY_ID}`)).toContain(
       input.description,
+    );
+  });
+
+  it('recovers a lost filing response without creating a duplicate', async () => {
+    const server = makeFakeServer();
+    server.failNextComplaintResponse = true;
+    const receipts: FilingReceipt[] = [];
+    const pipeline = makePipeline(server, baseInput(), receipts);
+
+    await expect(pipeline.run(() => {})).rejects.toBeInstanceOf(StepError);
+    expect(server.filedComplaints).toHaveLength(1);
+
+    // The retry sees the first slot's nullifier as used, finds the complaint
+    // with the same sealed payload hash, and returns its id instead of filing
+    // a second complaint with slot 1.
+    server.complaintResponses[1] = {
+      status: 400,
+      error: 'filing nullifier already used',
+    };
+    const result = await pipeline.run(() => {});
+
+    expect(result.complaintId).toBe('c-1');
+    expect(server.filedComplaints).toHaveLength(1);
+    expect(server.complaintCalls).toHaveLength(2);
+    expect(receipts).toHaveLength(1);
+  });
+
+  it('marks every completed pipeline step as done', async () => {
+    const server = makeFakeServer();
+    const pipeline = makePipeline(server, baseInput(), []);
+    const done = new Set<string>();
+
+    await pipeline.run((update) => {
+      if (update.phase === 'done') {
+        done.add(update.id);
+      }
+    });
+
+    expect([...done].sort()).toEqual(
+      SUBMIT_STEPS.map((step) => step.id).sort(),
     );
   });
 

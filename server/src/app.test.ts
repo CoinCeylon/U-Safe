@@ -109,6 +109,31 @@ describe('POST /api/complaints/:id/status', () => {
       .get('complaint-1') as { count: number };
     expect(history.count).toBe(0);
   });
+
+  it('rejects a registrar status change', async () => {
+    const registrarId = db
+      .prepare(
+        `INSERT INTO staff (university_id, role, address, public_key_jwk)
+         VALUES ('uni-1', 'registrar', 'staff-registrar', NULL)`,
+      )
+      .run().lastInsertRowid;
+    const token = issueSession(db, Number(registrarId));
+    const ledger = new MockLedger(db);
+    app = await buildApp(config, db, undefined, undefined, undefined, ledger);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/complaints/complaint-1/status',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        newStatus: 'pending_investigation',
+        outcomeHash: null,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ error: string }>()).toEqual({ error: 'forbidden' });
+  });
 });
 
 describe('M047 complaint routes', () => {

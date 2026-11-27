@@ -74,6 +74,7 @@ const enrollSchema = z.object({
 const complaintStatusSchema = z.object({
   newStatus: z.enum(['not_started', 'pending_investigation', 'finished']),
   outcomeHash: z.string().min(1).nullable().default(null),
+  outcomeLocator: z.string().min(1).nullable().optional(),
 });
 const communityKeySchema = z
   .object({
@@ -335,7 +336,7 @@ export const buildApp = async (
 
   app.put<{ Params: { id: string } }>(
     '/api/university/:id/public-key',
-    { preHandler: requireStaff() },
+    { preHandler: requireStaff(['admin']) },
     (request, reply) => {
       const staff = request.staff;
       if (
@@ -734,7 +735,14 @@ export const buildApp = async (
 
   app.post<{ Params: { id: string } }>(
     '/api/complaints/:id/status',
-    { preHandler: requireStaff() },
+    {
+      preHandler: requireStaff([
+        'investigator',
+        'admin',
+        'ugc',
+        'ugc_officer',
+      ]),
+    },
     async (request, reply) => {
       const parsed = complaintStatusSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -760,6 +768,7 @@ export const buildApp = async (
           complaintId: request.params.id,
           newStatus: parsed.data.newStatus,
           outcomeHash: parsed.data.outcomeHash,
+          outcomeLocator: parsed.data.outcomeLocator,
           ownerRole: staffOwnerRole(staff),
         });
       } catch (error) {
@@ -1007,15 +1016,19 @@ export const buildApp = async (
     });
   });
 
-  app.post('/api/events/publish', (request) => {
-    const body = (request.body ?? {}) as { type?: string; id?: string };
-    const event = {
-      type: typeof body.type === 'string' ? body.type : 'test.event',
-      id: typeof body.id === 'string' ? body.id : `evt-${Date.now()}`,
-    };
-    publish(event);
-    return { ok: true, event };
-  });
+  if (process.env.DEV_LOGIN === 'true') {
+    // Dev-only test helper for the SSE human test. Never expose an
+    // unauthenticated broadcast endpoint in a normal server run.
+    app.post('/api/events/publish', (request) => {
+      const body = (request.body ?? {}) as { type?: string; id?: string };
+      const event = {
+        type: typeof body.type === 'string' ? body.type : 'test.event',
+        id: typeof body.id === 'string' ? body.id : `evt-${Date.now()}`,
+      };
+      publish(event);
+      return { ok: true, event };
+    });
+  }
 
   return app;
 };

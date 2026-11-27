@@ -172,5 +172,12 @@ describe('M063 dev login routes', () => {
       payload: { staffId: registrarId },
     });
     expect(login.statusCode).toBe(404);
+
+    const publish = await app.inject({
+      method: 'POST',
+      url: '/api/events/publish',
+      payload: { type: 'test.event', id: 'e1' },
+    });
+    expect(publish.statusCode).toBe(404);
   });
 });

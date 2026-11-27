@@ -13,7 +13,7 @@ Record package names, versions and adaptations here.
   `browserWallet.signData(payload, address?)` returning `DataSignature { signature, key }`,
   and `browserWallet.getUsedAddresses()`. Lace wallet name is `lace`; install URL
   is `https://lace.dev/`.
-- Mail: `nodemailer` ^6.9.16 with `@types/nodemailer` ^8.0.2; `MAIL_MODE=dev|smtp`
+- Mail: `nodemailer` ^10.6.1 with `@types/nodemailer` ^8.0.2; `MAIL_MODE=dev|smtp`
   selects `ConsoleMailer` or `SmtpMailer`. Dev messages go to `server/.dev-mailbox/`,
   which is git-ignored; the console prints only the OTP code and file path, never the
   recipient address.
@@ -171,10 +171,11 @@ Record package names, versions and adaptations here.
   M067 can decrypt streamed, chunk by chunk.
 - The submission pipeline (`apps/web/src/student/submit.ts`) keeps encrypted artifacts
   and uploaded blob hashes per pipeline instance, so a retry resumes from the failed step
-  and never re-uploads a blob. Known edge case, accepted for mock mode: if the filing
-  request reaches the ledger but the response is lost, a retry burns the second monthly
-  slot and can create a second complaint, because the client cannot know the first
-  filing succeeded. The two-slot monthly limit still prevents a third copy.
+  and never re-uploads a blob. If the filing request reaches the ledger but the response
+  is lost, the retry sees `filing nullifier already used` and searches
+  `GET /api/complaints?university=` for a complaint with the same sealed payload hash.
+  Finding it recovers that complaint id instead of burning the second monthly slot; only
+  a different filing falls through to slot 1.
 - Filing receipts are stored through `SecureStore` (IndexedDB, encrypted with the
   student secret) in `apps/web/src/student/filings.ts`; M061 builds the "My complaints"
   page on top of them. Non-staff-involved filed descriptions also feed the M059
@@ -464,3 +465,22 @@ fixing agent did not commit anything; all changes are left for human review.
   `support nullifier already used` message as a quiet duplicate. Any other
   non-2xx response (invalid proof, wrong university, malformed context) is a
   normal error, so the UI no longer marks an invalid support as successful.
+- M059: the file form attempts to decrypt open community complaints with the
+  community key when the student is unlocked and enrolled, caches each text,
+  and falls back to the local cache when the key or network is unavailable.
+  Finished and UGC-owned complaints never enter the suggestion corpus.
+- M033: `/api/events/publish` exists only when `DEV_LOGIN=true`; it is a
+  human-test helper, not a production broadcast endpoint. The read-only SSE
+  `/api/events` stream remains public and carries only ids and event types.
+- M041: `ml_complaints.outcome_locator` stores the off-chain outcome blob
+  locator. `updateStatus` accepts an optional locator and falls back to the
+  outcome hash, so M068 can pass the sealed blob hash either way.
+- M008/M009: `DB_PATH` is accepted as an alias for `DATABASE_PATH`, and the
+  migration sequence is now 001–007 (the previous duplicate 005 files are
+  005_community_key_meta, 006_complaint_sequence and 007_outcome_locator).
+- M060 retry: after a lost response, the retry looks for the same sealed
+  payload hash in the public university complaint list and reuses that id.
+  It only tries slot 1 when the used slot belongs to a different filing.
+- Blob size: `MAX_BLOB_SIZE` is 26 MB, one megabyte above the 25 MB plaintext
+  evidence limit, so encrypted framing/IV/tag overhead cannot reject a valid
+  maximum-size file.
