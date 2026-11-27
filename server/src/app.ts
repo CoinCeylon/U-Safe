@@ -1016,9 +1016,12 @@ export const buildApp = async (
     });
   });
 
-  if (process.env.DEV_LOGIN === 'true') {
-    // Dev-only test helper for the SSE human test. Never expose an
-    // unauthenticated broadcast endpoint in a normal server run.
+  // Dev/test helper for the SSE human test. It is not registered in a
+  // production build or in automated tests (which use NODE_ENV=test).
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.NODE_ENV !== 'test'
+  ) {
     app.post('/api/events/publish', (request) => {
       const body = (request.body ?? {}) as { type?: string; id?: string };
       const event = {

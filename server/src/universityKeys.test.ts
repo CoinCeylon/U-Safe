@@ -69,7 +69,7 @@ describe('M064 PUT /api/university/:id/public-key', () => {
     const otherStaffId = db
       .prepare(
         `INSERT INTO staff (university_id, role, address, public_key_jwk)
-         VALUES ('uni-2', 'investigator', 'staff-2', NULL)`,
+         VALUES ('uni-2', 'admin', 'staff-2', NULL)`,
       )
       .run().lastInsertRowid;
     otherUniversityToken = issueSession(db, Number(otherStaffId));
