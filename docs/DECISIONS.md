@@ -433,3 +433,8 @@ fixing agent did not commit anything; all changes are left for human review.
   current-month check). A proof context such as `file|1999-01|0` is rejected.
   This keeps the browser's period identical to the server's even on a local
   month boundary.
+- M050/M063: Mesh's `BrowserWallet.getInstalledWallets()` returns both the
+  stable CIP-30 `id` and a display `name`; Lace's display name is `Lace`, so
+  detection uses `id === 'lace'`. Mesh's `BrowserWallet.signData` signature is
+  `signData(payload, address?)`; the shared university module now calls it in
+  that order so the CIP-8 challenge, not the address, is the signed payload.

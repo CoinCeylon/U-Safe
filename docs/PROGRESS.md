@@ -100,3 +100,5 @@ M065 | fixed | consolidated the duplicate UGC public-key lookup and delivery-sec
 M037 | fixed | the current Merkle root is always included in the grace-window root list, so students stay able to file and support after 14 days without a new enrollment
 M038 | fixed | membership verification now accepts the current root even when its creation timestamp is older than the 14-day window
 M039 | fixed | the mock ledger rejects filing proofs whose year-month is not the current UTC month, and the client uses UTC for filing periods so the two-slot monthly limit cannot be bypassed with arbitrary months
+M050 | fixed | student Lace detection matches the CIP-30 wallet id (`lace`), not the display name (`Lace`), and the lookup is unit tested
+M063 | fixed | the shared university wallet passes Mesh `signData(payload, address)` in the correct order, with a mocked regression test for CIP-8 login
