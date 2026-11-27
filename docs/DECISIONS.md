@@ -455,3 +455,8 @@ fixing agent did not commit anything; all changes are left for human review.
   a loaded machine even though the tests pass in isolation. `vitest.config.ts`
   is excluded from ESLint's type-aware parser because it sits outside any
   workspace tsconfig.
+- M060: a normal complaint that carries evidence must have the university's
+  registered RSA public key, because every per-file key must be wrapped for the
+  university. If the key is missing the `keys` step now throws a clear message
+  and no complaint is filed. Complaints without evidence and staff-involved
+  complaints (UGC-only wrapping) are unaffected.

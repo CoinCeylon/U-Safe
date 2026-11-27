@@ -431,6 +431,51 @@ describe('SubmissionPipeline (M060)', () => {
     );
   });
 
+  it('fails clearly when evidence needs a university key that is not registered', async () => {
+    const server = makeFakeServer();
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url === `/api/universities/${UNIVERSITY_ID}`) {
+        return new Response(
+          JSON.stringify({ id: UNIVERSITY_ID, public_key_jwk: null }),
+          { status: 200 },
+        );
+      }
+      return server.fetchImpl(input, init);
+    }) as typeof fetch;
+
+    const input = baseInput();
+    input.evidenceFiles = [
+      makeFile('photo-bytes-with-metadata', 'photo.png', 'image/png'),
+    ];
+    const pipeline = new SubmissionPipeline(
+      input,
+      secret,
+      () => Promise.resolve(credential),
+      {
+        fetchImpl,
+        queueDelayMinMs: 0,
+        queueDelayMaxMs: 0,
+        now: () => FIXED_NOW,
+        saveReceipt: () => Promise.resolve(),
+      },
+    );
+
+    await expect(pipeline.run(() => {})).rejects.toThrow(
+      /university has not registered its encryption key/i,
+    );
+    // The upload may already have happened, but no complaint is filed.
+    expect(server.complaintCalls).toHaveLength(0);
+  });
+
   it('falls back to slot 1 when slot 0 was already used this month', async () => {
     const server = makeFakeServer();
     server.complaintResponses = [

@@ -442,6 +442,15 @@ export class SubmissionPipeline {
     if (this.manifest === null) {
       await step('keys', async () => {
         const university = await this.fetchUniversity();
+        if (
+          !this.input.staffInvolved &&
+          this.encrypted.size > 0 &&
+          university.publicKeyJwk === null
+        ) {
+          throw new Error(
+            'The university has not registered its encryption key yet, so it could not read your evidence. Ask the university administrator to finish key setup and try again.',
+          );
+        }
         const ugcJwk = await this.fetchUgcJwk();
         const ugcPublicKey = await importPublicKeyJwk(ugcJwk);
         const universityPublicKey =
