@@ -223,6 +223,59 @@ describe('MockLedger (M037)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('keeps the current root valid after the grace window when no new enrollment happens', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const secret = randomBytes(32);
+    const commitmentHex = Buffer.from(
+      await hash(DOMAIN_TAG_COMMITMENT, secret),
+    ).toString('hex');
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    // Simulate a university with no new enrollment for 15 days. The current
+    // root is older than the 14-day grace window, but it must stay valid.
+    const old = new Date(
+      Date.now() - 15 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    db.prepare(
+      'UPDATE ml_roots SET created_at = ? WHERE university_id = ?',
+    ).run(old, 'uni-1');
+
+    const roots = await ledger.getRoots({ universityId: 'uni-1' });
+    expect(roots.roots).toContain(roots.currentRoot);
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      0,
+      `file|${yearMonth}|0`,
+    );
+    proof.universityId = 'uni-1';
+
+    const filed = await ledger.fileComplaint({
+      universityId: 'uni-1',
+      category: 'verbal',
+      urgency: 'normal',
+      staffInvolved: false,
+      payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+      payloadLocator: null,
+      proof,
+    });
+    expect(filed.id).toMatch(/^c-/);
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('fileComplaint accepts a valid filing, rejects duplicate nullifier, and enforces two slots per month', async () => {
     const yearMonth = new Date().toISOString().slice(0, 7);
     const { db, dir } = newDb();

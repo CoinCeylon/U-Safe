@@ -235,14 +235,17 @@ export class MockLedger implements LedgerAdapter {
     const cutoff = new Date(
       Date.now() - GRACE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const roots = rows.filter((row) => row.created_at >= cutoff);
+    const recentRoots = rows.filter((row) => row.created_at >= cutoff);
 
+    // The current root is always valid, even when the university has had no
+    // new enrollment for longer than the grace window (M037). Without this,
+    // every existing student would be locked out after 14 quiet days.
     const seen = new Set<string>();
     const deduped: string[] = [];
-    for (const row of roots) {
-      if (!seen.has(row.root)) {
-        seen.add(row.root);
-        deduped.push(row.root);
+    for (const root of [currentRoot, ...recentRoots.map((row) => row.root)]) {
+      if (!seen.has(root)) {
+        seen.add(root);
+        deduped.push(root);
       }
     }
 
