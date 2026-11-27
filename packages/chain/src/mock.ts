@@ -329,6 +329,15 @@ export class MockLedger implements LedgerAdapter {
       throw new Error('filing slot must be 0 or 1');
     }
 
+    // The month is part of the nullifier input, so the server must enforce it
+    // rather than trusting the client. Without this check a caller could file
+    // against arbitrary historical/future months and bypass the monthly limit.
+    const yearMonth = contextParts[1];
+    const currentYearMonth = new Date().toISOString().slice(0, 7);
+    if (yearMonth === undefined || yearMonth !== currentYearMonth) {
+      throw new Error('filing context month is not the current month');
+    }
+
     // 4. With only two slots (0 and 1) per year-month, a third filing would
     //    have to reuse one of them, so nullifier uniqueness enforces the
     //    per-student monthly filing limit.

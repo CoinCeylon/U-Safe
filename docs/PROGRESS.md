@@ -99,3 +99,4 @@ M065 | done | Admin-only Community key screen creates an AES-256 key in the brow
 M065 | fixed | consolidated the duplicate UGC public-key lookup and delivery-secret config, kept the metadata route's JWK as JSON text for the admin screen, parsed the public UGC JWK for student wrapping, and backfilled community-key creation date/academic year in seed:keys
 M037 | fixed | the current Merkle root is always included in the grace-window root list, so students stay able to file and support after 14 days without a new enrollment
 M038 | fixed | membership verification now accepts the current root even when its creation timestamp is older than the 14-day window
+M039 | fixed | the mock ledger rejects filing proofs whose year-month is not the current UTC month, and the client uses UTC for filing periods so the two-slot monthly limit cannot be bypassed with arbitrary months

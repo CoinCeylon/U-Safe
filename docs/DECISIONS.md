@@ -427,3 +427,9 @@ fixing agent did not commit anything; all changes are left for human review.
   `getUgcPublicKeyJwk` helper. `npm run seed:keys` now also backfills
   `community_key_created_at` and `community_key_academic_year` so a seeded key is
   shown as current on the M065 screen.
+- M039: the filing year-month is now enforced server-side and uses **UTC**
+  everywhere (`formatYearMonth` in the submission pipeline,
+  `countFilingsInMonth` for the local slots display, and the mock ledger's
+  current-month check). A proof context such as `file|1999-01|0` is rejected.
+  This keeps the browser's period identical to the server's even on a local
+  month boundary.

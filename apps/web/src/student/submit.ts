@@ -156,7 +156,9 @@ export interface SubmissionResult {
 
 /** "YYYY-MM" for the filing nullifier's year-month binding. */
 export function formatYearMonth(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  // UTC keeps the browser period aligned with the server's enforcement of the
+  // current month (M039), even around a local midnight/month boundary.
+  return date.toISOString().slice(0, 7);
 }
 
 /**

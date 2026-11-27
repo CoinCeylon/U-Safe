@@ -239,8 +239,8 @@ const makeFile = (contents: string, name: string, type: string): File =>
 
 describe('filing proof helpers', () => {
   it('formats the year-month with a zero-padded month', () => {
-    expect(formatYearMonth(new Date(2026, 0, 5))).toBe('2026-01');
-    expect(formatYearMonth(new Date(2026, 10, 25))).toBe('2026-11');
+    expect(formatYearMonth(new Date(Date.UTC(2026, 0, 5)))).toBe('2026-01');
+    expect(formatYearMonth(new Date(Date.UTC(2026, 10, 25)))).toBe('2026-11');
   });
 
   it('binds the filing proof nullifier to the slot', async () => {

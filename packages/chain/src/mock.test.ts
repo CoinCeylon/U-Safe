@@ -381,6 +381,47 @@ describe('MockLedger (M037)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('rejects a filing whose proof context names a different month (M039)', async () => {
+    const { db, dir } = newDb();
+    db.prepare(
+      `INSERT INTO universities (id, name, domain, enrollment_ceiling) VALUES (?, ?, ?, ?)`,
+    ).run('uni-1', 'Test University', 'test.ac.lk', 10);
+    const ledger = new MockLedger(db);
+
+    const secret = randomBytes(32);
+    const commitmentHex = Buffer.from(
+      await hash(DOMAIN_TAG_COMMITMENT, secret),
+    ).toString('hex');
+    await ledger.enrollCommitment({
+      universityId: 'uni-1',
+      commitment: commitmentHex,
+    });
+
+    const leaves = await ledger.getLeaves({ universityId: 'uni-1' });
+    const proof = await proveMembershipMock(
+      secret,
+      leaves.commitments,
+      0,
+      'file|1999-01|0',
+    );
+    proof.universityId = 'uni-1';
+
+    await expect(
+      ledger.fileComplaint({
+        universityId: 'uni-1',
+        category: 'verbal',
+        urgency: 'normal',
+        staffInvolved: false,
+        payloadHash: 'hash-' + randomBytes(16).toString('hex'),
+        payloadLocator: null,
+        proof,
+      }),
+    ).rejects.toThrow('filing context month is not the current month');
+
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('fileComplaint sets ownerRole to ugc when staffInvolved', async () => {
     const yearMonth = new Date().toISOString().slice(0, 7);
     const { db, dir } = newDb();
