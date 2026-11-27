@@ -250,7 +250,8 @@ const main = async (): Promise<void> => {
 
   const baseDir = process.env.INIT_CWD ?? process.cwd();
   const outputDir = resolve(baseDir, process.env.DEV_KEYS_DIR ?? '.dev-keys');
-  const configuredDatabasePath = process.env.DATABASE_PATH;
+  const configuredDatabasePath =
+    process.env.DATABASE_PATH ?? process.env.DB_PATH;
   const databasePath =
     configuredDatabasePath === undefined
       ? resolve(baseDir, 'server/data/usafe.db')

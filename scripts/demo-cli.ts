@@ -109,7 +109,8 @@ const main = async (): Promise<void> => {
   const noStatus = process.argv.includes('--no-status');
   const universityId = process.env.DEMO_UNIVERSITY_ID ?? 'moratuwa';
   const baseDir = process.env.INIT_CWD ?? process.cwd();
-  const configuredDatabasePath = process.env.DATABASE_PATH;
+  const configuredDatabasePath =
+    process.env.DATABASE_PATH ?? process.env.DB_PATH;
   const databasePath =
     configuredDatabasePath === undefined
       ? `${baseDir}/server/data/usafe.db`
