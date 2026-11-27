@@ -420,3 +420,10 @@ fixing agent did not commit anything; all changes are left for human review.
   complaints must stay readable. The browser keeps its encrypted backup in the
   `usafe-university` IndexedDB database under `communityKeyBackup:<id>` and can
   re-download it.
+- M065 API shape: `GET /api/university/:id/community-key` returns
+  `ugcPublicKeyJwk` as the stored JSON text because the admin screen parses it
+  before wrapping, while `GET /api/ugc/public-key` returns the parsed JWK object
+  used by the student submission pipeline. Both routes read the same single
+  `getUgcPublicKeyJwk` helper. `npm run seed:keys` now also backfills
+  `community_key_created_at` and `community_key_academic_year` so a seeded key is
+  shown as current on the M065 screen.

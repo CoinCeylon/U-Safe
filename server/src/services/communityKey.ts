@@ -78,26 +78,3 @@ export async function deliverCommunityKey(
   }
   return encoded;
 }
-
-interface UgcStaffRow {
-  public_key_jwk: string;
-}
-
-/** Returns the UGC public key JWK, or null when no UGC key is registered. */
-export function getUgcPublicKeyJwk(db: Database.Database): JsonWebKey | null {
-  const row = db
-    .prepare(
-      `SELECT public_key_jwk FROM staff
-       WHERE role = 'ugc' AND public_key_jwk IS NOT NULL
-       ORDER BY id ASC LIMIT 1`,
-    )
-    .get() as UgcStaffRow | undefined;
-  if (row === undefined) {
-    return null;
-  }
-  try {
-    return JSON.parse(row.public_key_jwk) as JsonWebKey;
-  } catch {
-    return null;
-  }
-}

@@ -9,6 +9,9 @@ const envSchema = z.object({
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   DATABASE_PATH: z.string().default('./data/usafe.db'),
   EMAIL_HASH_SALT: z.string().default('dev-email-hash-salt'),
+  // Wraps each university community key for delivery to newly enrolled
+  // students. Optional so tests and local servers without a demo key set can
+  // still start; community key delivery is disabled when it is empty.
   COMMUNITY_DELIVERY_SECRET: z.string().default(''),
   MAIL_MODE: z.enum(['dev', 'smtp']).default('dev'),
   SMTP_HOST: z.string().default(''),
@@ -16,10 +19,6 @@ const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASS: z.string().default(''),
   MAIL_FROM: z.string().default('noreply@usafe.local'),
-  // Wraps each university community key for delivery to newly enrolled
-  // students. Optional so tests and local servers without a demo key set can
-  // still start; community key delivery is disabled when it is empty.
-  COMMUNITY_DELIVERY_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

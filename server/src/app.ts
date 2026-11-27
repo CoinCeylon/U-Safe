@@ -36,7 +36,6 @@ import { addClient, publish, removeClient } from './services/events.js';
 import {
   CommunityKeyError,
   deliverCommunityKey,
-  getUgcPublicKeyJwk,
 } from './services/communityKey.js';
 import { requireEnrollmentProof } from './hooks/requireEnrollmentProof.js';
 import {
@@ -978,7 +977,14 @@ export const buildApp = async (
       reply.code(404);
       return { error: 'ugc public key not registered' };
     }
-    return { publicKeyJwk };
+    // The database stores the JWK as JSON text; clients expect the parsed
+    // object (the university metadata route keeps the text form).
+    try {
+      return { publicKeyJwk: JSON.parse(publicKeyJwk) as JsonWebKey };
+    } catch {
+      reply.code(500);
+      return { error: 'ugc public key is malformed' };
+    }
   });
 
   app.get('/api/events', (request, reply) => {

@@ -28,7 +28,8 @@ interface CommunityKeyInfo {
   hasKey: boolean;
   createdAt: string | null;
   academicYear: string | null;
-  ugcPublicKeyJwk: string | null;
+  /** String in the metadata route; object accepted defensively. */
+  ugcPublicKeyJwk: string | JsonWebKey | null;
 }
 
 interface CreatedCommunityKey {
@@ -83,14 +84,18 @@ const readInfo = async (
 const createCommunityKey = async (
   session: StaffSession,
   universityId: string,
-  ugcPublicKeyJwk: string,
+  ugcPublicKeyJwk: string | JsonWebKey,
   passphrase: string,
 ): Promise<CreatedCommunityKey> => {
   const communityKey = generateCommunityKey();
   try {
+    const ugcJwk =
+      typeof ugcPublicKeyJwk === 'string'
+        ? (JSON.parse(ugcPublicKeyJwk) as JsonWebKey)
+        : ugcPublicKeyJwk;
     const wrapped = await wrapAesKeyBytes(
       communityKey,
-      await importPublicKeyJwk(JSON.parse(ugcPublicKeyJwk) as JsonWebKey),
+      await importPublicKeyJwk(ugcJwk),
     );
 
     const response = await fetch(
@@ -153,10 +158,13 @@ const renderCurrentKey = (
   info: CommunityKeyInfo,
   universityId: string,
 ): HTMLElement => {
-  if (info.hasKey && info.createdAt !== null) {
+  if (info.hasKey) {
     const created = document.createElement('p');
     created.className = 'text-sm text-slate-600';
-    created.textContent = `Created ${new Date(info.createdAt).toLocaleString()} (academic year ${info.academicYear ?? 'unknown'}).`;
+    created.textContent =
+      info.createdAt !== null
+        ? `Created ${new Date(info.createdAt).toLocaleString()} (academic year ${info.academicYear ?? 'unknown'}).`
+        : 'This key was seeded before creation metadata was stored; its creation date is unknown.';
 
     const download = button({
       label: 'Download encrypted backup',
@@ -173,7 +181,12 @@ const renderCurrentKey = (
 
     return card(
       'Current community key',
-      badge(`Academic year ${info.academicYear ?? 'unknown'}`, 'success'),
+      badge(
+        info.academicYear !== null
+          ? `Academic year ${info.academicYear}`
+          : 'Academic year unknown',
+        'success',
+      ),
       created,
       download,
     );
